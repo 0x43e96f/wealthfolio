@@ -465,20 +465,16 @@ impl MarketDataClient {
         // Preferred provider from asset
         let preferred_provider: Option<ProviderId> = asset.preferred_provider().map(Cow::Owned);
 
-        // Convert bond spec to market-data BondQuoteMetadata when available.
-        // coupon_rate defaults to 0 for zero-coupon instruments (T-bills).
-        // maturity_date is still required — without it we can't price.
-        let bond_metadata = match asset.bond_spec() {
-            Some(spec) if spec.maturity_date.is_some() => Some(BondQuoteMetadata {
-                coupon_rate: spec.coupon_rate.unwrap_or(rust_decimal::Decimal::ZERO),
-                maturity_date: spec.maturity_date.unwrap(),
+        // Unknown coupon and frequency are not zero-coupon terms.
+        let bond_metadata = asset.bond_spec().and_then(|spec| {
+            Some(BondQuoteMetadata {
+                treasury_type: spec.treasury_type,
+                coupon_rate: spec.coupon_rate?,
+                maturity_date: spec.maturity_date?,
                 face_value: spec.face_value.unwrap_or(rust_decimal::Decimal::from(1000)),
-                coupon_frequency: spec
-                    .coupon_frequency
-                    .unwrap_or_else(|| "SEMI_ANNUAL".to_string()),
-            }),
-            _ => None,
-        };
+                coupon_frequency: spec.coupon_frequency?,
+            })
+        });
 
         // Extract custom_provider_code from provider_config if present
         let custom_provider_code = asset
@@ -1323,6 +1319,25 @@ mod tests {
         let context = client.build_quote_context(&asset).unwrap();
 
         assert_eq!(context.currency_hint.as_deref(), Some("CAD"));
+    }
+
+    #[test]
+    fn unknown_bond_coupon_or_frequency_does_not_create_calculated_terms() {
+        let mut asset = create_test_asset(AssetKind::Investment, "US912810TH14", "USD");
+        asset.instrument_type = Some(crate::assets::InstrumentType::Bond);
+        asset.instrument_symbol = Some("US912810TH14".into());
+        let client = create_test_client();
+        for bond in [
+            serde_json::json!({"maturityDate": "2043-05-15", "couponFrequency": "SEMI_ANNUAL"}),
+            serde_json::json!({"maturityDate": "2043-05-15", "couponRate": 0.04}),
+        ] {
+            asset.metadata = Some(serde_json::json!({"bond": bond}));
+            assert!(client
+                .build_quote_context(&asset)
+                .unwrap()
+                .bond_metadata
+                .is_none());
+        }
     }
 
     #[test]

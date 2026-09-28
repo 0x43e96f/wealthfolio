@@ -17,6 +17,8 @@ pub struct QuoteIdentifiers {
 /// Bond metadata needed for yield-curve-based price calculation.
 #[derive(Clone, Debug)]
 pub struct BondQuoteMetadata {
+    /// Verified TreasuryDirect type, required by the Treasury calculator.
+    pub treasury_type: Option<String>,
     /// Annual coupon rate as a decimal (0.05 = 5%)
     pub coupon_rate: Decimal,
     /// Maturity date of the bond

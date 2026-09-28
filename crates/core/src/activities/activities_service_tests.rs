@@ -4287,6 +4287,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_bond_activity_reuses_existing_cusip_by_isin() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        account_service.add_account(create_test_account("acc-bonds", "USD"));
+        let cusip = "037833EZ9";
+        let isin = crate::utils::cusip::cusip_to_isin(cusip, "US");
+        let asset = create_test_asset_with_instrument(
+            "existing-bond",
+            cusip,
+            None,
+            Some(InstrumentType::Bond),
+            "USD",
+        );
+        asset_service.add_asset(asset);
+        let activity_service = ActivityService::new(
+            Arc::new(MockActivityRepository::new()),
+            account_service,
+            asset_service.clone(),
+            Arc::new(MockFxService::new()),
+            Arc::new(MockQuoteService),
+        );
+
+        let created = activity_service
+            .create_activity(NewActivity {
+                id: Some("bond-buy".to_string()),
+                account_id: "acc-bonds".to_string(),
+                asset: Some(AssetResolutionInput {
+                    symbol: Some(isin),
+                    instrument_type: Some("BOND".to_string()),
+                    quote_ccy: Some("USD".to_string()),
+                    ..Default::default()
+                }),
+                activity_type: "BUY".to_string(),
+                subtype: None,
+                activity_date: "2024-01-15".to_string(),
+                quantity: Some(dec!(100)),
+                unit_price: Some(dec!(0.98)),
+                amount: Some(dec!(98)),
+                currency: "USD".to_string(),
+                fee: None,
+                tax: None,
+                status: None,
+                notes: None,
+                fx_rate: None,
+                metadata: None,
+                needs_review: None,
+                source_system: None,
+                source_record_id: None,
+                source_group_id: None,
+                idempotency_key: None,
+                import_run_id: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(created.asset_id.as_deref(), Some("existing-bond"));
+        assert_eq!(asset_service.get_assets().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn sync_prepare_cross_quote_mini_option_derives_in_activity_currency() {
         let account_service = Arc::new(MockAccountService::new());
         let asset_service = Arc::new(MockAssetService::new());

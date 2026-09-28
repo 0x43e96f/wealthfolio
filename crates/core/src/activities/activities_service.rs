@@ -59,9 +59,9 @@ use crate::activities::{
 };
 use crate::assets::{
     canonicalize_market_identity, normalize_quote_ccy_code, parse_crypto_pair_symbol,
-    parse_symbol_with_known_exchange, resolve_import_quote_ccy_precedence,
+    parse_symbol_with_known_exchange, resolve_bond_aliases, resolve_import_quote_ccy_precedence,
     resolve_quote_ccy_precedence, AssetKind, AssetResolutionInput as ImportAssetResolutionInput,
-    AssetServiceTrait, InstrumentType, QuoteCcyResolutionSource, QuoteMode,
+    AssetServiceTrait, AssetSpec, InstrumentType, QuoteCcyResolutionSource, QuoteMode,
 };
 use crate::errors::{DatabaseError, Error};
 use crate::events::{DomainEvent, DomainEventSink, NoOpDomainEventSink};
@@ -2515,6 +2515,20 @@ impl ActivityService {
                         return Some(asset.id.clone());
                     }
                 }
+            }
+        }
+
+        if instrument_type == Some(&InstrumentType::Bond) {
+            let mut specs = [AssetSpec::market_instrument(
+                symbol.to_string(),
+                symbol.to_string(),
+                exchange_mic.map(str::to_string),
+                InstrumentType::Bond,
+                quote_ccy.unwrap_or("USD").to_string(),
+            )];
+            resolve_bond_aliases(&mut specs, &assets);
+            if let Some(id) = specs[0].id.clone() {
+                return Some(id);
             }
         }
 

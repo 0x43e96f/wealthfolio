@@ -216,6 +216,9 @@ pub fn contract_multiplier_from_asset_metadata(
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BondSpec {
+    /// TreasuryDirect `type`; absent until verified by Treasury enrichment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub treasury_type: Option<String>,
     pub maturity_date: Option<chrono::NaiveDate>,
     pub coupon_rate: Option<Decimal>, // Annual coupon rate (e.g., 0.04375 = 4.375%)
     pub face_value: Option<Decimal>,  // Par value per bond (typically 1000.0)
@@ -253,15 +256,8 @@ pub fn build_asset_metadata(
             let isin = crate::utils::isin::parse_isin(&normalized)
                 .ok()
                 .map(|_| normalized);
-            // Keep the existing zero-coupon display before asynchronous Treasury
-            // enrichment supplies the actual terms. Require a valid identifier.
-            let is_tbill = isin
-                .as_deref()
-                .is_some_and(|isin| isin.starts_with("US912797"));
             let spec = BondSpec {
                 isin,
-                coupon_rate: is_tbill.then_some(Decimal::ZERO),
-                coupon_frequency: is_tbill.then(|| "ZERO".to_string()),
                 ..Default::default()
             };
             Some(serde_json::json!({ "bond": spec }))
@@ -1353,8 +1349,8 @@ mod tests {
         for symbol in ["US912797NQ65", "912797NQ6"] {
             let meta = build_asset_metadata(Some(&InstrumentType::Bond), symbol).unwrap();
             let bond: BondSpec = serde_json::from_value(meta["bond"].clone()).unwrap();
-            assert_eq!(bond.coupon_rate, Some(Decimal::ZERO));
-            assert_eq!(bond.coupon_frequency.as_deref(), Some("ZERO"));
+            assert_eq!(bond.coupon_rate, None);
+            assert_eq!(bond.coupon_frequency, None);
             assert_eq!(bond.isin.as_deref(), Some("US912797NQ65"));
         }
     }

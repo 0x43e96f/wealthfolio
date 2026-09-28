@@ -50,7 +50,6 @@ pub use assets_model::{
     QuoteCcyResolutionSource, QuoteMode, Sector, UpdateAssetProfile,
     CONTRACT_MULTIPLIER_METADATA_KEY,
 };
-#[cfg(test)]
 pub(crate) use assets_service::resolve_bond_aliases;
 pub use assets_service::AssetService;
 pub use assets_traits::{AssetRepositoryTrait, AssetServiceTrait};
