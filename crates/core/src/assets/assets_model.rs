@@ -249,10 +249,19 @@ pub fn build_asset_metadata(
             Some(serde_json::json!({ "option": spec }))
         }
         InstrumentType::Bond => {
+            let normalized = crate::utils::cusip::normalize_bond_identifier(symbol);
+            let isin = crate::utils::isin::parse_isin(&normalized)
+                .ok()
+                .map(|_| normalized);
+            // Keep the existing zero-coupon display before asynchronous Treasury
+            // enrichment supplies the actual terms. Require a valid identifier.
+            let is_tbill = isin
+                .as_deref()
+                .is_some_and(|isin| isin.starts_with("US912797"));
             let spec = BondSpec {
-                isin: crate::utils::isin::parse_isin(symbol)
-                    .ok()
-                    .map(|_| symbol.trim().to_ascii_uppercase()),
+                isin,
+                coupon_rate: is_tbill.then_some(Decimal::ZERO),
+                coupon_frequency: is_tbill.then(|| "ZERO".to_string()),
                 ..Default::default()
             };
             Some(serde_json::json!({ "bond": spec }))
@@ -1341,18 +1350,13 @@ mod tests {
 
     #[test]
     fn test_build_asset_metadata_tbill_isin() {
-        let meta = build_asset_metadata(Some(&InstrumentType::Bond), "US912797NQ65");
-        let meta = meta.expect("T-bill should produce metadata");
-        let bond: BondSpec = serde_json::from_value(meta.get("bond").cloned().unwrap()).unwrap();
-
-        // Coupon fields come from Treasury details, not the identifier.
-        assert_eq!(bond.coupon_rate, None);
-        assert_eq!(bond.coupon_frequency, None);
-        assert_eq!(
-            bond.isin.as_deref(),
-            Some("US912797NQ65"),
-            "ISIN should be preserved"
-        );
+        for symbol in ["US912797NQ65", "912797NQ6"] {
+            let meta = build_asset_metadata(Some(&InstrumentType::Bond), symbol).unwrap();
+            let bond: BondSpec = serde_json::from_value(meta["bond"].clone()).unwrap();
+            assert_eq!(bond.coupon_rate, Some(Decimal::ZERO));
+            assert_eq!(bond.coupon_frequency.as_deref(), Some("ZERO"));
+            assert_eq!(bond.isin.as_deref(), Some("US912797NQ65"));
+        }
     }
 
     #[test]
