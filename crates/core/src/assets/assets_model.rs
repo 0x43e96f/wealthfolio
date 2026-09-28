@@ -253,7 +253,11 @@ pub fn build_asset_metadata(
             // Other bonds get None and rely on user/provider to fill in.
             let is_tbill = symbol.starts_with("US912797") || symbol.starts_with("912797");
             let spec = BondSpec {
-                isin: Some(symbol.to_uppercase()),
+                isin: symbol
+                    .is_ascii()
+                    .then(|| crate::utils::isin::parse_isin(symbol).ok())
+                    .flatten()
+                    .map(|_| symbol.to_uppercase()),
                 coupon_rate: if is_tbill { Some(Decimal::ZERO) } else { None },
                 coupon_frequency: if is_tbill {
                     Some("ZERO".to_string())
@@ -1156,24 +1160,10 @@ pub fn canonicalize_market_identity(
             }
         }
         Some(InstrumentType::Bond) => {
-            // Bonds use ISIN as symbol (uppercase, no exchange suffix)
-            if let Some(raw) = instrument_symbol.as_deref() {
-                let upper = raw.to_uppercase();
-                // Auto-convert 9-char CUSIPs to 12-char ISINs for proper
-                // provider routing (US_TREASURY_CALC, BOERSE_FRANKFURT).
-                // Country code comes from the search result's currency (set by
-                // the provider, e.g. OpenFIGI's securityType → "USD").
-                instrument_symbol = Some(if crate::utils::cusip::looks_like_cusip(&upper) {
-                    let country = match normalized_quote.as_deref() {
-                        Some("CAD") => "CA",
-                        Some("BMD") => "BM",
-                        _ => "US",
-                    };
-                    crate::utils::cusip::cusip_to_isin(&upper, country)
-                } else {
-                    upper
-                });
-            }
+            // Preserve unresolved CUSIPs. Currency describes the quote, not the issuer.
+            instrument_symbol = instrument_symbol
+                .as_deref()
+                .map(crate::utils::cusip::normalize_bond_identifier);
             CanonicalMarketIdentity {
                 display_code: instrument_symbol.clone(),
                 instrument_symbol,
@@ -1292,6 +1282,33 @@ impl AssetSpec {
             provider_symbol: None,
             metadata: None,
         }
+    }
+
+    /// Reuse a unique existing bond identity without rewriting its identifier.
+    /// Only explicit bonds participate; this is not missing-type inference.
+    pub fn reuse_existing_bond(&mut self, assets: &[Asset]) {
+        if self.id.is_some() || self.instrument_type != Some(InstrumentType::Bond) {
+            return;
+        }
+        let Some(symbol) = self.instrument_symbol.as_deref() else {
+            return;
+        };
+        let mut matches = assets.iter().filter(|asset| {
+            asset.instrument_type == Some(InstrumentType::Bond)
+                && asset.instrument_symbol.as_deref().is_some_and(|existing| {
+                    crate::utils::cusip::bond_identifiers_match(symbol, existing)
+                })
+        });
+        let Some(existing) = matches.next() else {
+            return;
+        };
+        if matches.next().is_some() {
+            return;
+        }
+        self.id = Some(existing.id.clone());
+        self.instrument_symbol = existing.instrument_symbol.clone();
+        self.instrument_exchange_mic = existing.instrument_exchange_mic.clone();
+        self.display_code = existing.display_code.clone();
     }
 
     /// Extracts the option contract multiplier from pre-built metadata, if present.
@@ -1454,7 +1471,7 @@ mod tests {
 
     #[test]
     fn test_canonicalize_market_identity_cusip_to_isin() {
-        // 9-char CUSIP for a bond should be converted to 12-char ISIN
+        // A validated Treasury CUSIP should be converted to its US ISIN
         let result = canonicalize_market_identity(
             Some(InstrumentType::Bond),
             Some("912797NQ6"),
@@ -1485,42 +1502,52 @@ mod tests {
     }
 
     #[test]
-    fn test_canonicalize_market_identity_cusip_to_isin_canadian() {
-        // Canadian bond CUSIP should produce a CA-prefixed ISIN
-        let result = canonicalize_market_identity(
-            Some(InstrumentType::Bond),
-            Some("135087D26"),
-            None,
-            Some("CAD"),
-        );
-
-        let sym = result.instrument_symbol.expect("should have symbol");
-        assert_eq!(sym.len(), 12, "CUSIP should be converted to 12-char ISIN");
-        assert!(
-            sym.starts_with("CA"),
-            "Canadian bond ISIN should start with CA, got {}",
-            sym
-        );
+    fn bond_identity_does_not_infer_country_from_currency() {
+        for currency in [None, Some("USD"), Some("CAD"), Some("BMD")] {
+            for symbol in ["912810TH1", "US912810TH14"] {
+                let result = canonicalize_market_identity(
+                    Some(InstrumentType::Bond),
+                    Some(symbol),
+                    Some("XNAS"),
+                    currency,
+                );
+                assert_eq!(result.instrument_symbol.as_deref(), Some("US912810TH14"));
+                assert_eq!(result.instrument_exchange_mic, None);
+            }
+            // Even a valid Canadian CUSIP supplies no country by itself.
+            let result = canonicalize_market_identity(
+                Some(InstrumentType::Bond),
+                Some("135087D27"),
+                None,
+                currency,
+            );
+            assert_eq!(result.instrument_symbol.as_deref(), Some("135087D27"));
+        }
     }
 
     #[test]
-    fn test_canonicalize_market_identity_cusip_defaults_to_us() {
-        // When no currency is provided, CUSIP should default to US
+    fn unresolved_bond_cusip_is_not_written_as_isin_metadata() {
+        let metadata = build_asset_metadata(Some(&InstrumentType::Bond), "135087D27").unwrap();
+        assert!(metadata["bond"]["isin"].is_null());
+    }
+
+    #[test]
+    fn test_canonicalize_market_identity_treasury_without_currency() {
+        // Treasury issuer identity establishes US independently of currency.
         let result =
             canonicalize_market_identity(Some(InstrumentType::Bond), Some("912797NQ6"), None, None);
 
         let sym = result.instrument_symbol.expect("should have symbol");
         assert!(
             sym.starts_with("US"),
-            "CUSIP with no currency should default to US, got {}",
+            "Treasury CUSIP should resolve to US without currency, got {}",
             sym
         );
     }
 
     #[test]
     fn test_canonicalize_market_identity_us_treasury_with_usd_currency() {
-        // When the search provider sets currency to USD (from securityType),
-        // US Treasury CUSIPs get the correct US prefix.
+        // Treasury issuer identity supplies the US prefix; USD is only the quote currency.
         let result = canonicalize_market_identity(
             Some(InstrumentType::Bond),
             Some("912797TR8"),

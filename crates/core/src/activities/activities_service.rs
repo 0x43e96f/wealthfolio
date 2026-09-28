@@ -3718,7 +3718,7 @@ impl ActivityService {
             None
         };
 
-        Ok(Some(AssetSpec {
+        let mut spec = AssetSpec {
             id: existing_id,
             display_code: Some(asset_symbol.clone()),
             instrument_symbol: Some(asset_symbol),
@@ -3739,7 +3739,11 @@ impl ActivityService {
                 .as_ref()
                 .and_then(|asset| asset.provider_symbol.clone()),
             metadata: asset_metadata,
-        }))
+        };
+        if spec.id.is_none() && spec.instrument_type == Some(InstrumentType::Bond) {
+            spec.reuse_existing_bond(&self.asset_service.get_assets()?);
+        }
+        Ok(Some(spec))
     }
 
     /// Validates currency codes on an activity, marking invalid if malformed.

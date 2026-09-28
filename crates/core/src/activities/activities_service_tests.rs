@@ -4105,18 +4105,25 @@ mod tests {
 
     #[tokio::test]
     async fn sync_prepare_bond_cusip_reuses_holdings_isin_identity() {
-        for holding_exists in [false, true] {
+        let canadian_isin = crate::utils::cusip::cusip_to_isin("135087D27", "CA");
+        for (holding_exists, account_ccy, cusip, isin) in [
+            (false, "USD", "912810TH1", "US912810TH14"),
+            (true, "USD", "912810TH1", "US912810TH14"),
+            (false, "CAD", "912810TH1", "US912810TH14"),
+            (true, "CAD", "912810TH1", "US912810TH14"),
+            (true, "USD", "135087D27", canadian_isin.as_str()),
+        ] {
             let account_service = Arc::new(MockAccountService::new());
             let asset_service = Arc::new(MockAssetService::new());
-            let account = create_test_account("acc-usd", "USD");
+            let account = create_test_account("acc-usd", account_ccy);
             account_service.add_account(account.clone());
             if holding_exists {
                 asset_service.add_asset(Asset {
                     id: "holding-bond".to_string(),
-                    display_code: Some("US912810TH14".to_string()),
-                    instrument_symbol: Some("US912810TH14".to_string()),
+                    display_code: Some(isin.to_string()),
+                    instrument_symbol: Some(isin.to_string()),
                     instrument_type: Some(InstrumentType::Bond),
-                    instrument_key: Some("BOND:US912810TH14".to_string()),
+                    instrument_key: Some(format!("BOND:{isin}")),
                     quote_ccy: "USD".to_string(),
                     kind: AssetKind::Investment,
                     ..Default::default()
@@ -4133,9 +4140,9 @@ mod tests {
                 id: Some("bond-buy".to_string()),
                 account_id: "acc-usd".to_string(),
                 asset: Some(AssetResolutionInput {
-                    symbol: Some("912810TH1".to_string()),
+                    symbol: Some(cusip.to_string()),
                     instrument_type: Some("BOND".to_string()),
-                    quote_ccy: Some("USD".to_string()),
+                    quote_ccy: None,
                     ..Default::default()
                 }),
                 activity_type: "BUY".to_string(),
@@ -4143,7 +4150,7 @@ mod tests {
                 activity_date: "2024-01-15".to_string(),
                 quantity: Some(dec!(1000)),
                 unit_price: Some(dec!(0.955)),
-                currency: "USD".to_string(),
+                currency: account_ccy.to_string(),
                 fee: None,
                 tax: None,
                 amount: Some(dec!(955)),
@@ -4159,7 +4166,7 @@ mod tests {
                 import_run_id: None,
             };
 
-            for symbol in ["912810TH1", "US912810TH14", "912810TH1"] {
+            for symbol in [cusip, isin, cusip] {
                 let mut activity = activity.clone();
                 let input = activity.asset.as_mut().unwrap();
                 input.symbol = Some(symbol.to_string());
@@ -4185,7 +4192,7 @@ mod tests {
                 assert_eq!(assets.len(), 1);
                 assert_eq!(
                     assets[0].instrument_key.as_deref(),
-                    Some("BOND:US912810TH14")
+                    Some(format!("BOND:{isin}").as_str())
                 );
             }
         }

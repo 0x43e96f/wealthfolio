@@ -105,9 +105,51 @@ pub fn cusip_to_isin(cusip: &str, country_code: &str) -> String {
     format!("{}{}", body, check)
 }
 
+/// Resolve only CUSIPs whose issuer establishes the country. Treasury CUSIPs
+/// use the 912 issuer family, also recognized by US_TREASURY_CALC. Other CUSIPs
+/// require an authoritative ISIN; trading currency cannot supply its prefix.
+pub fn normalize_bond_identifier(symbol: &str) -> String {
+    let upper = symbol.trim().to_uppercase();
+    if upper.starts_with("912") && parse_cusip(&upper).is_ok() {
+        cusip_to_isin(&upper, "US")
+    } else {
+        upper
+    }
+}
+
+/// Match a validated North American/Bermudian ISIN to its embedded CUSIP.
+/// A CUSIP alone does not establish which country allocated the ISIN.
+pub fn bond_identifiers_match(left: &str, right: &str) -> bool {
+    let left = left.trim().to_uppercase();
+    let right = right.trim().to_uppercase();
+    if left == right {
+        return true;
+    }
+    let matches_isin = |cusip: &str, isin: &str| {
+        if !isin.is_ascii() || parse_cusip(cusip).is_err() {
+            return false;
+        }
+        super::isin::parse_isin(isin).is_ok_and(|parsed| {
+            matches!(parsed.country_code.as_str(), "US" | "CA" | "BM") && parsed.nsin == cusip
+        })
+    };
+    matches_isin(&left, &right) || matches_isin(&right, &left)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bond_identifier_matching_requires_valid_unambiguous_identifiers() {
+        let isin = cusip_to_isin("135087D27", "CA");
+        assert!(bond_identifiers_match("135087D27", &isin));
+        assert!(bond_identifiers_match(&isin, "135087D27"));
+        assert!(!bond_identifiers_match("135087D26", &isin));
+        assert!(!bond_identifiers_match("135087D27", "éééééé"));
+        assert_eq!(normalize_bond_identifier("912810TH0"), "912810TH0");
+        assert_eq!(normalize_bond_identifier("135087D27"), "135087D27");
+    }
 
     #[test]
     fn test_parse_us_treasury() {

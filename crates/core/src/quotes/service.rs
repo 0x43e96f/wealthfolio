@@ -1705,12 +1705,7 @@ where
             // US_TREASURY_CALC can price them during resolve.
             let bond_metadata = if instrument_type == Some(&InstrumentType::Bond) {
                 let upper = attempt_symbol.to_uppercase();
-                // Convert CUSIP to ISIN if needed
-                let isin = if crate::utils::cusip::looks_like_cusip(&upper) {
-                    crate::utils::cusip::cusip_to_isin(&upper, "US")
-                } else {
-                    upper
-                };
+                let isin = crate::utils::cusip::normalize_bond_identifier(&upper);
                 if isin.starts_with("US912") {
                     let http = wealthfolio_http::client();
                     wealthfolio_market_data::provider::us_treasury_calc::UsTreasuryCalcProvider::fetch_bond_details(&http, &isin).await

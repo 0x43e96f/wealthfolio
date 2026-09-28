@@ -900,6 +900,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         let mut authoritative_multipliers: HashMap<String, Decimal> = HashMap::new();
         let mut position_data: Vec<HoldingsPositionData> = Vec::new();
 
+        let mut existing_bond_assets = None;
         for pos in &positions {
             let symbol_info = pos.symbol.as_ref().and_then(|s| s.symbol.as_ref());
             let symbol_type_code = symbol_info
@@ -959,7 +960,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
 
             let asset_name = symbol_info.and_then(|s| s.name.clone().or(s.description.clone()));
 
-            let spec = AssetSpec {
+            let mut spec = AssetSpec {
                 name: asset_name,
                 metadata: regular_contract_multiplier_metadata(exact_multiplier),
                 ..AssetSpec::market_instrument(
@@ -970,6 +971,15 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
                     raw_quote_currency.clone(),
                 )
             };
+
+            if spec.instrument_type == Some(InstrumentType::Bond) {
+                if existing_bond_assets.is_none() {
+                    existing_bond_assets = Some(self.asset_service.get_assets()?);
+                }
+                if let Some(assets) = &existing_bond_assets {
+                    spec.reuse_existing_bond(assets);
+                }
+            }
 
             let spec_key = spec.instrument_key().unwrap_or_else(|| {
                 format!(
