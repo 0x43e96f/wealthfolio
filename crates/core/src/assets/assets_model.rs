@@ -1248,8 +1248,7 @@ impl AssetSpec {
         instrument_type: InstrumentType,
         quote_ccy: String,
     ) -> Self {
-        // Bond creation stores ISINs without a venue. Use that same identity
-        // before callers deduplicate or look up a spec by its instrument key.
+        // Normalize bond identity before callers deduplicate or look up its key.
         let (display_code, instrument_symbol, instrument_exchange_mic) =
             if instrument_type == InstrumentType::Bond {
                 let canonical = canonicalize_market_identity(
@@ -1282,33 +1281,6 @@ impl AssetSpec {
             provider_symbol: None,
             metadata: None,
         }
-    }
-
-    /// Reuse a unique existing bond identity without rewriting its identifier.
-    /// Only explicit bonds participate; this is not missing-type inference.
-    pub fn reuse_existing_bond(&mut self, assets: &[Asset]) {
-        if self.id.is_some() || self.instrument_type != Some(InstrumentType::Bond) {
-            return;
-        }
-        let Some(symbol) = self.instrument_symbol.as_deref() else {
-            return;
-        };
-        let mut matches = assets.iter().filter(|asset| {
-            asset.instrument_type == Some(InstrumentType::Bond)
-                && asset.instrument_symbol.as_deref().is_some_and(|existing| {
-                    crate::utils::cusip::bond_identifiers_match(symbol, existing)
-                })
-        });
-        let Some(existing) = matches.next() else {
-            return;
-        };
-        if matches.next().is_some() {
-            return;
-        }
-        self.id = Some(existing.id.clone());
-        self.instrument_symbol = existing.instrument_symbol.clone();
-        self.instrument_exchange_mic = existing.instrument_exchange_mic.clone();
-        self.display_code = existing.display_code.clone();
     }
 
     /// Extracts the option contract multiplier from pre-built metadata, if present.
@@ -1366,6 +1338,8 @@ impl AssetSpec {
 pub struct EnsureAssetsResult {
     /// All assets (existing + created), keyed by asset ID
     pub assets: HashMap<String, Asset>,
+    /// Incoming asset ID or instrument key to its resolved asset ID.
+    pub input_to_asset_id: HashMap<String, String>,
     /// IDs of newly created assets
     pub created_ids: Vec<String>,
     /// Merge candidates: (resolved_id, unknown_id) pairs where UNKNOWN was merged into resolved

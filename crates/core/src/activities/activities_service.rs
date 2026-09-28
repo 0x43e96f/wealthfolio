@@ -3682,8 +3682,7 @@ impl ActivityService {
             resolved_quote_ccy
         };
 
-        // Bond holdings use a canonical ISIN identity. Resolve activity CUSIPs the
-        // same way before both lookup and ensure_assets instrument-key matching.
+        // Normalize activity bonds the same way as holdings before asset lookup.
         let (asset_symbol, asset_exchange_mic) = if instrument_type == Some(InstrumentType::Bond) {
             let canonical = canonicalize_market_identity(
                 instrument_type.clone(),
@@ -3702,14 +3701,17 @@ impl ActivityService {
         };
 
         // Look up existing asset by instrument fields to get its UUID
-        let existing_id = self
-            .find_existing_asset_id(
+        let existing_id = if instrument_type == Some(InstrumentType::Bond) {
+            submitted_asset_id
+        } else {
+            self.find_existing_asset_id(
                 &asset_symbol,
                 asset_exchange_mic.as_deref(),
                 instrument_type.as_ref(),
                 Some(&asset_currency),
             )
-            .or(submitted_asset_id);
+            .or(submitted_asset_id)
+        };
         let asset_metadata = if is_option {
             Self::custom_option_multiplier(activity.metadata.as_deref()).and_then(|multiplier| {
                 crate::assets::build_option_metadata(&normalized_symbol, multiplier)
@@ -3718,7 +3720,7 @@ impl ActivityService {
             None
         };
 
-        let mut spec = AssetSpec {
+        let spec = AssetSpec {
             id: existing_id,
             display_code: Some(asset_symbol.clone()),
             instrument_symbol: Some(asset_symbol),
@@ -3740,9 +3742,6 @@ impl ActivityService {
                 .and_then(|asset| asset.provider_symbol.clone()),
             metadata: asset_metadata,
         };
-        if spec.id.is_none() && spec.instrument_type == Some(InstrumentType::Bond) {
-            spec.reuse_existing_bond(&self.asset_service.get_assets()?);
-        }
         Ok(Some(spec))
     }
 
@@ -6615,29 +6614,17 @@ impl ActivityService {
         result.assets_created = ensure_result.created_ids.len() as u32;
         result.created_asset_ids = ensure_result.created_ids.clone();
 
-        // Build reverse lookup: instrument_key → asset_id for resolving activity_asset_map entries
-        let mut key_to_asset_id: HashMap<String, String> = HashMap::new();
-        for asset in ensure_result.assets.values() {
-            if let Some(ref key) = asset.instrument_key {
-                key_to_asset_id.insert(key.clone(), asset.id.clone());
-            }
-        }
-
         // Resolve activity_asset_map entries: replace instrument_key refs with actual asset IDs
         for entry in &mut activity_asset_map {
             if let Some(ref map_key) = entry {
-                // If the map_key is not a direct asset ID in ensure_result, try instrument_key lookup
-                if !ensure_result.assets.contains_key(map_key) {
-                    if let Some(asset_id) = key_to_asset_id.get(map_key) {
-                        *entry = Some(asset_id.clone());
-                    } else {
-                        // Unresolved instrument_key — clear to avoid FK violation
-                        warn!(
-                            "Could not resolve asset for key '{}'; activity will have no linked asset",
-                            map_key
-                        );
-                        *entry = None;
-                    }
+                if let Some(asset_id) = ensure_result.input_to_asset_id.get(map_key) {
+                    *entry = Some(asset_id.clone());
+                } else {
+                    warn!(
+                        "Could not resolve asset for key '{}'; activity will have no linked asset",
+                        map_key
+                    );
+                    *entry = None;
                 }
             }
         }

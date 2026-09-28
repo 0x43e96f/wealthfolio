@@ -236,17 +236,26 @@ mod tests {
 
         async fn ensure_assets(
             &self,
-            specs: Vec<crate::assets::AssetSpec>,
+            mut specs: Vec<crate::assets::AssetSpec>,
             _activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
         ) -> Result<crate::assets::EnsureAssetsResult> {
             let mut result = crate::assets::EnsureAssetsResult::default();
             let mut assets = self.assets.lock().unwrap();
 
-            for spec in specs {
+            let input_keys: Vec<Option<String>> = specs
+                .iter()
+                .map(|spec| spec.id.clone().or_else(|| spec.instrument_key()))
+                .collect();
+            crate::assets::resolve_bond_aliases(&mut specs, &assets);
+
+            for (spec, input_key) in specs.into_iter().zip(input_keys) {
                 if let Some(ref id) = spec.id {
                     // Look up existing assets by spec ID
                     if let Some(asset) = assets.iter().find(|a| a.id == *id) {
                         result.assets.insert(id.clone(), asset.clone());
+                        if let Some(input_key) = input_key {
+                            result.input_to_asset_id.insert(input_key, id.clone());
+                        }
                     }
                     continue;
                 }
@@ -258,6 +267,11 @@ mod tests {
                     .find(|a| a.instrument_key.is_some() && a.instrument_key == instrument_key)
                 {
                     result.assets.insert(existing.id.clone(), existing.clone());
+                    if let Some(input_key) = input_key {
+                        result
+                            .input_to_asset_id
+                            .insert(input_key, existing.id.clone());
+                    }
                     continue;
                 }
                 let symbol = spec
@@ -278,6 +292,11 @@ mod tests {
                 };
                 result.created_ids.push(created.id.clone());
                 result.assets.insert(created.id.clone(), created.clone());
+                if let Some(input_key) = input_key {
+                    result
+                        .input_to_asset_id
+                        .insert(input_key, created.id.clone());
+                }
                 assets.push(created);
             }
 
@@ -4111,6 +4130,7 @@ mod tests {
             (true, "USD", "912810TH1", "US912810TH14"),
             (false, "CAD", "912810TH1", "US912810TH14"),
             (true, "CAD", "912810TH1", "US912810TH14"),
+            (false, "USD", "135087D27", canadian_isin.as_str()),
             (true, "USD", "135087D27", canadian_isin.as_str()),
         ] {
             let account_service = Arc::new(MockAccountService::new());
@@ -4180,22 +4200,90 @@ mod tests {
                 assert_eq!(result.prepared[0].activity.amount, Some(dec!(955)));
                 assert_eq!(result.prepared[0].activity.unit_price, Some(dec!(0.955)));
                 let asset_id = result.prepared[0].activity.get_symbol_id();
-                assert_eq!(
-                    asset_id,
-                    Some(if holding_exists {
-                        "holding-bond"
-                    } else {
-                        "created-US912810TH14"
-                    })
-                );
+                let expected_id = if holding_exists {
+                    "holding-bond".to_string()
+                } else if cusip.starts_with("912") {
+                    "created-US912810TH14".to_string()
+                } else {
+                    format!("created-{cusip}")
+                };
+                assert_eq!(asset_id, Some(expected_id.as_str()));
                 let assets = asset_service.get_assets().unwrap();
                 assert_eq!(assets.len(), 1);
+                let stored_symbol = if !holding_exists && !cusip.starts_with("912") {
+                    cusip
+                } else {
+                    isin
+                };
                 assert_eq!(
                     assets[0].instrument_key.as_deref(),
-                    Some(format!("BOND:{isin}").as_str())
+                    Some(format!("BOND:{stored_symbol}").as_str())
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn sync_prepare_mixed_bond_identifiers_in_one_batch_links_both_activities() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let account = create_test_account("acc-bonds", "USD");
+        account_service.add_account(account.clone());
+        let activity_service = ActivityService::new(
+            Arc::new(MockActivityRepository::new()),
+            account_service,
+            asset_service.clone(),
+            Arc::new(MockFxService::new()),
+            Arc::new(MockQuoteService),
+        );
+        let isin = crate::utils::cusip::cusip_to_isin("135087D27", "CA");
+        let make_activity = |symbol: &str| NewActivity {
+            id: None,
+            account_id: account.id.clone(),
+            asset: Some(AssetResolutionInput {
+                symbol: Some(symbol.to_string()),
+                instrument_type: Some("BOND".to_string()),
+                ..Default::default()
+            }),
+            activity_type: "BUY".to_string(),
+            subtype: None,
+            activity_date: "2024-01-15".to_string(),
+            quantity: Some(dec!(100)),
+            unit_price: Some(dec!(1)),
+            amount: Some(dec!(100)),
+            currency: "USD".to_string(),
+            fee: None,
+            tax: None,
+            status: Some(ActivityStatus::Posted),
+            notes: None,
+            fx_rate: None,
+            metadata: None,
+            needs_review: None,
+            source_system: Some("SNAPTRADE".to_string()),
+            source_record_id: None,
+            source_group_id: None,
+            idempotency_key: None,
+            import_run_id: None,
+        };
+
+        let result = activity_service
+            .prepare_activities_for_sync(
+                vec![make_activity("135087D27"), make_activity(&isin)],
+                &account,
+            )
+            .await
+            .unwrap();
+        assert!(result.errors.is_empty());
+        assert_eq!(result.prepared.len(), 2);
+        let first_id = result.prepared[0].activity.get_symbol_id().unwrap();
+        assert_eq!(result.prepared[1].activity.get_symbol_id(), Some(first_id));
+        assert_eq!(asset_service.get_assets().unwrap().len(), 1);
+        assert_eq!(
+            asset_service.get_assets().unwrap()[0]
+                .instrument_key
+                .as_deref(),
+            Some(format!("BOND:{isin}").as_str())
+        );
     }
 
     #[tokio::test]

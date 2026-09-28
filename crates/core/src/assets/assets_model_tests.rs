@@ -32,44 +32,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bond_spec_reuses_unique_isin_independently_of_currency() {
-        let cusip = "135087D27";
-        let isin = crate::utils::cusip::cusip_to_isin(cusip, "CA");
-        let asset = Asset {
-            id: "existing-canadian-bond".into(),
-            instrument_type: Some(InstrumentType::Bond),
-            instrument_symbol: Some(isin.clone()),
-            quote_ccy: "CAD".into(),
-            ..Default::default()
-        };
-        let make_spec = || {
-            AssetSpec::market_instrument(
-                cusip.into(),
-                cusip.into(),
-                None,
-                InstrumentType::Bond,
-                "USD".into(),
-            )
-        };
-        let mut spec = make_spec();
-        spec.reuse_existing_bond(std::slice::from_ref(&asset));
-        assert_eq!(spec.id.as_deref(), Some("existing-canadian-bond"));
-        assert_eq!(spec.instrument_symbol.as_deref(), Some(isin.as_str()));
-        assert_eq!(spec.quote_ccy, "USD");
-
-        // Two country-prefixed candidates cannot establish which asset is intended.
-        let conflicting = Asset {
-            id: "conflicting-bond".into(),
-            instrument_symbol: Some(crate::utils::cusip::cusip_to_isin(cusip, "US")),
-            ..asset.clone()
-        };
-        let mut ambiguous = make_spec();
-        ambiguous.reuse_existing_bond(&[asset, conflicting]);
-        assert_eq!(ambiguous.id, None);
-        assert_eq!(ambiguous.instrument_symbol.as_deref(), Some(cusip));
-    }
-
     // Test AssetKind enum
     #[test]
     fn test_asset_kind_serialization() {

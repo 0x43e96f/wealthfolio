@@ -88,6 +88,69 @@ fn asset_metadata_isin(asset: &Asset) -> Option<String> {
         .and_then(normalized_lookup_key)
 }
 
+/// Resolve bond aliases within one batch and against stored assets. The incoming
+/// instrument key is retained separately by ensure_assets for its callers.
+pub(crate) fn resolve_bond_aliases(specs: &mut [AssetSpec], existing_assets: &[Asset]) {
+    let mut incoming_isins: Vec<String> = specs
+        .iter()
+        .filter(|spec| spec.instrument_type == Some(InstrumentType::Bond))
+        .filter_map(|spec| spec.instrument_symbol.as_deref())
+        .filter(|symbol| symbol.is_ascii() && crate::utils::isin::parse_isin(symbol).is_ok())
+        .map(str::to_string)
+        .collect();
+    incoming_isins.sort_unstable();
+    incoming_isins.dedup();
+
+    for spec in specs {
+        if spec.id.is_some() || spec.instrument_type != Some(InstrumentType::Bond) {
+            continue;
+        }
+        let Some(symbol) = spec.instrument_symbol.as_deref() else {
+            continue;
+        };
+        let key = spec.instrument_key();
+        let exact = existing_assets.iter().find(|asset| {
+            asset.instrument_type == Some(InstrumentType::Bond)
+                && asset.instrument_key.as_deref() == key.as_deref()
+        });
+        if let Some(asset) = exact {
+            spec.id = Some(asset.id.clone());
+            continue;
+        }
+
+        let existing: Vec<&Asset> = existing_assets
+            .iter()
+            .filter(|asset| {
+                asset.instrument_type == Some(InstrumentType::Bond)
+                    && asset.instrument_symbol.as_deref().is_some_and(|candidate| {
+                        crate::utils::cusip::bond_identifiers_match(symbol, candidate)
+                    })
+            })
+            .collect();
+        let incoming: Vec<&String> = incoming_isins
+            .iter()
+            .filter(|candidate| {
+                candidate.as_str() != symbol
+                    && crate::utils::cusip::bond_identifiers_match(symbol, candidate)
+            })
+            .collect();
+
+        // A matching incoming ISIN may refer to the same stored asset. Any
+        // other competing identity leaves the CUSIP unresolved.
+        match (existing.as_slice(), incoming.as_slice()) {
+            ([asset], []) => spec.id = Some(asset.id.clone()),
+            ([asset], [isin]) if asset.instrument_symbol.as_deref() == Some(isin.as_str()) => {
+                spec.id = Some(asset.id.clone());
+            }
+            ([], [isin]) => {
+                spec.instrument_symbol = Some((*isin).clone());
+                spec.display_code = Some((*isin).clone());
+            }
+            _ => {}
+        }
+    }
+}
+
 struct AssetResolutionLocalIndex {
     assets: Vec<Asset>,
     by_id: HashMap<String, usize>,
@@ -2579,17 +2642,34 @@ impl AssetServiceTrait for AssetService {
 
     async fn ensure_assets(
         &self,
-        specs: Vec<AssetSpec>,
+        mut specs: Vec<AssetSpec>,
         _activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
     ) -> Result<EnsureAssetsResult> {
         if specs.is_empty() {
             return Ok(EnsureAssetsResult::default());
         }
 
+        let input_keys: Vec<Option<String>> = specs
+            .iter()
+            .map(|spec| spec.id.clone().or_else(|| spec.instrument_key()))
+            .collect();
+        if specs
+            .iter()
+            .any(|spec| spec.instrument_type == Some(InstrumentType::Bond) && spec.id.is_none())
+        {
+            resolve_bond_aliases(&mut specs, &self.get_assets()?);
+        }
+        let input_to_resolved_key: Vec<(Option<String>, Option<String>)> = input_keys
+            .into_iter()
+            .zip(&specs)
+            .map(|(input, spec)| (input, spec.id.clone().or_else(|| spec.instrument_key())))
+            .collect();
+
         // Deduplicate specs by ID (if present) or by instrument_key
         let unique_specs: Vec<AssetSpec> = specs
             .into_iter()
-            .fold(HashMap::new(), |mut map, spec| {
+            .zip(&input_to_resolved_key)
+            .fold(HashMap::new(), |mut map, (spec, (input_key, _))| {
                 let key = spec.id.clone().unwrap_or_else(|| {
                     spec.instrument_key().unwrap_or_else(|| {
                         format!(
@@ -2603,10 +2683,22 @@ impl AssetServiceTrait for AssetService {
                         )
                     })
                 });
-                map.entry(key).or_insert(spec);
+                let is_original_identity = spec.instrument_key().as_ref() == input_key.as_ref();
+                match map.entry(key) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert((spec, is_original_identity));
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut entry)
+                        if is_original_identity && !entry.get().1 =>
+                    {
+                        entry.insert((spec, true));
+                    }
+                    _ => {}
+                }
                 map
             })
             .into_values()
+            .map(|(spec, _)| spec)
             .collect();
 
         // Pre-resolve specs without IDs by looking up via instrument_key
@@ -2843,8 +2935,19 @@ impl AssetServiceTrait for AssetService {
             self.event_sink
                 .emit(DomainEvent::assets_created(created_ids.clone()));
         }
+        let key_to_id: HashMap<String, String> = assets_map
+            .values()
+            .filter_map(|asset| Some((asset.instrument_key.clone()?, asset.id.clone())))
+            .chain(assets_map.keys().map(|id| (id.clone(), id.clone())))
+            .collect();
+        let input_to_asset_id = input_to_resolved_key
+            .into_iter()
+            .filter_map(|(input, resolved)| Some((input?, key_to_id.get(&resolved?)?.clone())))
+            .collect();
+
         Ok(EnsureAssetsResult {
             assets: assets_map,
+            input_to_asset_id,
             created_ids,
             merge_candidates: Vec::new(),
         })
@@ -2857,7 +2960,9 @@ mod tests {
         Asset, AssetKind, AssetSpec, InstrumentType, NewAsset, ProviderProfile,
         QuoteCcyResolutionSource, UpdateAssetProfile,
     };
-    use super::{AssetRepositoryTrait, AssetService, AssetServiceTrait, QuoteMode};
+    use super::{
+        resolve_bond_aliases, AssetRepositoryTrait, AssetService, AssetServiceTrait, QuoteMode,
+    };
     use crate::assets::AssetResolutionInput;
     use crate::errors::{DatabaseError, Error, Result};
     use crate::events::{DomainEvent, MockDomainEventSink};
@@ -2870,6 +2975,67 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
 
+    #[test]
+    fn bond_aliases_resolve_unique_existing_and_incoming_isins() {
+        let cusip = "135087D27";
+        let isin = crate::utils::cusip::cusip_to_isin(cusip, "CA");
+        let bond = Asset {
+            id: "stored-bond".into(),
+            instrument_type: Some(InstrumentType::Bond),
+            instrument_symbol: Some(isin.clone()),
+            instrument_key: Some(format!("BOND:{isin}")),
+            quote_ccy: "CAD".into(),
+            ..Default::default()
+        };
+        let make_spec = |symbol: &str| {
+            AssetSpec::market_instrument(
+                symbol.into(),
+                symbol.into(),
+                None,
+                InstrumentType::Bond,
+                "USD".into(),
+            )
+        };
+
+        let mut existing = vec![make_spec(cusip)];
+        resolve_bond_aliases(&mut existing, std::slice::from_ref(&bond));
+        assert_eq!(existing[0].id.as_deref(), Some("stored-bond"));
+        assert_eq!(existing[0].quote_ccy, "USD");
+
+        let mut incoming = vec![make_spec(cusip), make_spec(&isin), make_spec(&isin)];
+        resolve_bond_aliases(&mut incoming, &[]);
+        assert_eq!(incoming[0].instrument_key(), incoming[1].instrument_key());
+        assert_eq!(
+            incoming[0].instrument_key().as_deref(),
+            Some(format!("BOND:{isin}").as_str())
+        );
+
+        let other_isin = crate::utils::cusip::cusip_to_isin(cusip, "US");
+        let mut ambiguous = vec![make_spec(cusip), make_spec(&isin), make_spec(&other_isin)];
+        resolve_bond_aliases(&mut ambiguous, &[]);
+        assert_eq!(ambiguous[0].instrument_symbol.as_deref(), Some(cusip));
+
+        let conflicting = Asset {
+            id: "other-bond".into(),
+            instrument_symbol: Some(other_isin),
+            instrument_key: None,
+            ..bond.clone()
+        };
+        let mut ambiguous_existing = vec![make_spec(cusip)];
+        resolve_bond_aliases(&mut ambiguous_existing, &[bond, conflicting]);
+        assert_eq!(ambiguous_existing[0].id, None);
+
+        let exact_asset = Asset {
+            id: "stored-cusip".into(),
+            instrument_type: Some(InstrumentType::Bond),
+            instrument_symbol: Some(cusip.into()),
+            instrument_key: Some(format!("BOND:{cusip}")),
+            ..Default::default()
+        };
+        let mut exact = vec![make_spec(cusip), make_spec(&isin)];
+        resolve_bond_aliases(&mut exact, &[exact_asset]);
+        assert_eq!(exact[0].id.as_deref(), Some("stored-cusip"));
+    }
     #[derive(Default)]
     struct TestAssetRepository {
         assets: Mutex<Vec<Asset>>,

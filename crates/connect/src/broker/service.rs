@@ -900,7 +900,6 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         let mut authoritative_multipliers: HashMap<String, Decimal> = HashMap::new();
         let mut position_data: Vec<HoldingsPositionData> = Vec::new();
 
-        let mut existing_bond_assets = None;
         for pos in &positions {
             let symbol_info = pos.symbol.as_ref().and_then(|s| s.symbol.as_ref());
             let symbol_type_code = symbol_info
@@ -960,7 +959,7 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
 
             let asset_name = symbol_info.and_then(|s| s.name.clone().or(s.description.clone()));
 
-            let mut spec = AssetSpec {
+            let spec = AssetSpec {
                 name: asset_name,
                 metadata: regular_contract_multiplier_metadata(exact_multiplier),
                 ..AssetSpec::market_instrument(
@@ -971,15 +970,6 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
                     raw_quote_currency.clone(),
                 )
             };
-
-            if spec.instrument_type == Some(InstrumentType::Bond) {
-                if existing_bond_assets.is_none() {
-                    existing_bond_assets = Some(self.asset_service.get_assets()?);
-                }
-                if let Some(assets) = &existing_bond_assets {
-                    spec.reuse_existing_bond(assets);
-                }
-            }
 
             let spec_key = spec.instrument_key().unwrap_or_else(|| {
                 format!(
@@ -1149,33 +1139,12 @@ impl BrokerSyncServiceTrait for BrokerSyncService {
         let assets_created = ensure_result.created_ids.len();
         let new_asset_ids = ensure_result.created_ids.clone();
 
-        // Build instrument_key → asset_id lookup
-        let mut key_to_asset_id: HashMap<String, String> = HashMap::new();
-        for asset in ensure_result.assets.values() {
-            if let Some(ref key) = asset.instrument_key {
-                key_to_asset_id.insert(key.clone(), asset.id.clone());
-            }
-        }
-
-        // Also map by direct asset id
-        for id in ensure_result.assets.keys() {
-            key_to_asset_id.insert(id.clone(), id.clone());
-        }
-
         // 3. Build spec_key → asset_id mapping
         let mut spec_key_to_asset_id: HashMap<String, String> = HashMap::new();
         for (spec_key, idx) in &spec_key_to_idx {
             let spec = &asset_specs[*idx];
-            // Try instrument_key first
-            if let Some(ikey) = spec.instrument_key() {
-                if let Some(asset_id) = key_to_asset_id.get(&ikey) {
-                    spec_key_to_asset_id.insert(spec_key.clone(), asset_id.clone());
-                    continue;
-                }
-            }
-            // Fall back to ID if provided
-            if let Some(ref id) = spec.id {
-                if let Some(asset_id) = key_to_asset_id.get(id) {
+            if let Some(input_key) = spec.id.clone().or_else(|| spec.instrument_key()) {
+                if let Some(asset_id) = ensure_result.input_to_asset_id.get(&input_key) {
                     spec_key_to_asset_id.insert(spec_key.clone(), asset_id.clone());
                 }
             }
