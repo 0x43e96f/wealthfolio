@@ -3682,11 +3682,30 @@ impl ActivityService {
             resolved_quote_ccy
         };
 
+        // Bond holdings use a canonical ISIN identity. Resolve activity CUSIPs the
+        // same way before both lookup and ensure_assets instrument-key matching.
+        let (asset_symbol, asset_exchange_mic) = if instrument_type == Some(InstrumentType::Bond) {
+            let canonical = canonicalize_market_identity(
+                instrument_type.clone(),
+                Some(&normalized_symbol),
+                exchange_mic.as_deref(),
+                Some(&asset_currency),
+            );
+            (
+                canonical
+                    .instrument_symbol
+                    .unwrap_or_else(|| normalized_symbol.clone()),
+                canonical.instrument_exchange_mic,
+            )
+        } else {
+            (normalized_symbol.clone(), exchange_mic)
+        };
+
         // Look up existing asset by instrument fields to get its UUID
         let existing_id = self
             .find_existing_asset_id(
-                &normalized_symbol,
-                exchange_mic.as_deref(),
+                &asset_symbol,
+                asset_exchange_mic.as_deref(),
                 instrument_type.as_ref(),
                 Some(&asset_currency),
             )
@@ -3701,9 +3720,9 @@ impl ActivityService {
 
         Ok(Some(AssetSpec {
             id: existing_id,
-            display_code: Some(normalized_symbol.clone()),
-            instrument_symbol: Some(normalized_symbol.clone()),
-            instrument_exchange_mic: exchange_mic,
+            display_code: Some(asset_symbol.clone()),
+            instrument_symbol: Some(asset_symbol),
+            instrument_exchange_mic: asset_exchange_mic,
             instrument_type,
             quote_ccy: asset_currency,
             requested_quote_ccy: quote_ccy_for_asset,

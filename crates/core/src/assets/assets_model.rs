@@ -1258,6 +1258,24 @@ impl AssetSpec {
         instrument_type: InstrumentType,
         quote_ccy: String,
     ) -> Self {
+        // Bond creation stores ISINs without a venue. Use that same identity
+        // before callers deduplicate or look up a spec by its instrument key.
+        let (display_code, instrument_symbol, instrument_exchange_mic) =
+            if instrument_type == InstrumentType::Bond {
+                let canonical = canonicalize_market_identity(
+                    Some(instrument_type.clone()),
+                    Some(&instrument_symbol),
+                    instrument_exchange_mic.as_deref(),
+                    Some(&quote_ccy),
+                );
+                (
+                    canonical.display_code.unwrap_or(display_code),
+                    canonical.instrument_symbol.unwrap_or(instrument_symbol),
+                    canonical.instrument_exchange_mic,
+                )
+            } else {
+                (display_code, instrument_symbol, instrument_exchange_mic)
+            };
         Self {
             id: None,
             display_code: Some(display_code),

@@ -269,7 +269,8 @@ fn map_instrument_type_to_taxonomy_category(
         InstrumentType::Equity => Some("STOCK_COMMON"),
         InstrumentType::Crypto => Some("CRYPTO_NATIVE"),
         InstrumentType::Option => Some("OPTION"),
-        InstrumentType::Bond => Some("BOND_CORPORATE"),
+        // A broker's generic bond code does not establish the issuer or bond subtype.
+        InstrumentType::Bond => Some("DEBT_SECURITY"),
         InstrumentType::Metal => Some("PHYSICAL_METAL"),
         InstrumentType::Fx => None,
     }
@@ -846,6 +847,60 @@ mod tests {
     use chrono::Utc;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn generic_broker_bond_is_not_assumed_to_be_corporate() {
+        assert_eq!(
+            map_instrument_type_to_taxonomy_category(&InstrumentType::Bond),
+            Some("DEBT_SECURITY")
+        );
+    }
+
+    #[tokio::test]
+    async fn bond_classification_is_repeatable_and_preserves_user_subtype() {
+        for manual_category in [None, Some("BOND_MUNICIPAL")] {
+            let existing = manual_category
+                .map(|category| {
+                    vec![assignment(
+                        "user-bond",
+                        "bond-1",
+                        INSTRUMENT_TYPE_TAXONOMY,
+                        category,
+                        10000,
+                        "manual",
+                    )]
+                })
+                .unwrap_or_default();
+            let service = Arc::new(MockTaxonomyService::with_assignments(existing));
+            let classifier = AutoClassificationService::new(service.clone());
+            for _ in 0..2 {
+                classifier
+                    .classify_from_spec(
+                        "bond-1",
+                        Some(&InstrumentType::Bond),
+                        &AssetKind::Investment,
+                    )
+                    .await;
+                let assignments = service.assignments_for("bond-1", INSTRUMENT_TYPE_TAXONOMY);
+                assert_eq!(assignments.len(), 1);
+                assert_eq!(
+                    assignments[0].category_id,
+                    manual_category.unwrap_or("DEBT_SECURITY")
+                );
+                assert_eq!(
+                    assignments[0].source,
+                    if manual_category.is_some() {
+                        "manual"
+                    } else {
+                        AUTO_SOURCE
+                    }
+                );
+                let classes = service.assignments_for("bond-1", ASSET_CLASSES_TAXONOMY);
+                assert_eq!(classes.len(), 1);
+                assert_eq!(classes[0].category_id, "FIXED_INCOME");
+            }
+        }
+    }
 
     #[test]
     fn test_map_quote_type_to_instrument_type() {
@@ -1586,7 +1641,7 @@ mod tests {
 
             let id = assignment
                 .id
-                .unwrap_or_else(|| format!("assignment-{}", assignments.len() + 1));
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let created = self::assignment(
                 &id,
                 &assignment.asset_id,

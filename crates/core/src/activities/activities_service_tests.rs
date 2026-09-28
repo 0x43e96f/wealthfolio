@@ -4104,6 +4104,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_prepare_bond_cusip_reuses_holdings_isin_identity() {
+        for holding_exists in [false, true] {
+            let account_service = Arc::new(MockAccountService::new());
+            let asset_service = Arc::new(MockAssetService::new());
+            let account = create_test_account("acc-usd", "USD");
+            account_service.add_account(account.clone());
+            if holding_exists {
+                asset_service.add_asset(Asset {
+                    id: "holding-bond".to_string(),
+                    display_code: Some("US912810TH14".to_string()),
+                    instrument_symbol: Some("US912810TH14".to_string()),
+                    instrument_type: Some(InstrumentType::Bond),
+                    instrument_key: Some("BOND:US912810TH14".to_string()),
+                    quote_ccy: "USD".to_string(),
+                    kind: AssetKind::Investment,
+                    ..Default::default()
+                });
+            }
+            let activity_service = ActivityService::new(
+                Arc::new(MockActivityRepository::new()),
+                account_service,
+                asset_service.clone(),
+                Arc::new(MockFxService::new()),
+                Arc::new(MockQuoteService),
+            );
+            let activity = NewActivity {
+                id: Some("bond-buy".to_string()),
+                account_id: "acc-usd".to_string(),
+                asset: Some(AssetResolutionInput {
+                    symbol: Some("912810TH1".to_string()),
+                    instrument_type: Some("BOND".to_string()),
+                    quote_ccy: Some("USD".to_string()),
+                    ..Default::default()
+                }),
+                activity_type: "BUY".to_string(),
+                subtype: None,
+                activity_date: "2024-01-15".to_string(),
+                quantity: Some(dec!(1000)),
+                unit_price: Some(dec!(0.955)),
+                currency: "USD".to_string(),
+                fee: None,
+                tax: None,
+                amount: Some(dec!(955)),
+                status: Some(ActivityStatus::Posted),
+                notes: None,
+                fx_rate: None,
+                metadata: None,
+                needs_review: None,
+                source_system: Some("SNAPTRADE".to_string()),
+                source_record_id: Some("bond-buy".to_string()),
+                source_group_id: None,
+                idempotency_key: None,
+                import_run_id: None,
+            };
+
+            for symbol in ["912810TH1", "US912810TH14", "912810TH1"] {
+                let mut activity = activity.clone();
+                let input = activity.asset.as_mut().unwrap();
+                input.symbol = Some(symbol.to_string());
+                input.exchange_mic = Some("XNAS".to_string());
+                let result = activity_service
+                    .prepare_activities_for_sync(vec![activity.clone()], &account)
+                    .await
+                    .expect("bond activity should prepare");
+                assert!(result.errors.is_empty());
+                assert_eq!(result.prepared.len(), 1);
+                assert_eq!(result.prepared[0].activity.amount, Some(dec!(955)));
+                assert_eq!(result.prepared[0].activity.unit_price, Some(dec!(0.955)));
+                let asset_id = result.prepared[0].activity.get_symbol_id();
+                assert_eq!(
+                    asset_id,
+                    Some(if holding_exists {
+                        "holding-bond"
+                    } else {
+                        "created-US912810TH14"
+                    })
+                );
+                let assets = asset_service.get_assets().unwrap();
+                assert_eq!(assets.len(), 1);
+                assert_eq!(
+                    assets[0].instrument_key.as_deref(),
+                    Some("BOND:US912810TH14")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn sync_prepare_cross_quote_mini_option_derives_in_activity_currency() {
         let account_service = Arc::new(MockAccountService::new());
         let asset_service = Arc::new(MockAssetService::new());
