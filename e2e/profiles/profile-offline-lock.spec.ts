@@ -10,7 +10,7 @@ async function command(context: BrowserContext, name: string, data = {}, scope?:
 }
 
 for (const protectedProfile of [false, true]) {
-  test(`offline state verification resumes the same ${protectedProfile ? "protected" : "unprotected"} session on reconnect`, async ({
+  test(`offline state verification preserves the same ${protectedProfile ? "protected" : "unprotected"} session on reconnect`, async ({
     page,
     context,
   }, info) => {
@@ -75,16 +75,15 @@ for (const protectedProfile of [false, true]) {
     });
     try {
       // No clicks, keys, navigation, focus changes, or synthetic activity events:
-      // the state re-check triggered by going offline must close the cached financial screen.
+      // a failed state re-check must leave the already-open portfolio visible.
       await context.setOffline(true);
       await failedRead;
-      await expect(page.locator(".app-shell")).not.toBeVisible({ timeout: 15000 });
+      await expect(page.locator(".app-shell").first()).toBeVisible();
       await expect(
         page.getByRole("link", { name: "Synthetic private account", exact: true }),
-      ).not.toBeVisible();
-      const retry = page.getByRole("button", { name: "Retry", exact: true });
-      await expect(retry).toBeVisible();
-      await page.screenshot({ path: info.outputPath("offline-covered.png"), fullPage: true });
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+      await page.screenshot({ path: info.outputPath("offline-visible.png"), fullPage: true });
       await context.setOffline(false);
       await expect(
         page.getByRole("link", { name: "Synthetic private account", exact: true }),

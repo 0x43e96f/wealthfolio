@@ -30,19 +30,22 @@ it("preserves authority through an outage but revokes it when a remounted shell 
       <QueryClientProvider client={queries}>
         <ProfileShell>
           <div>Private portfolio</div>
+          <input aria-label="Unsubmitted edit" />
         </ProfileShell>
       </QueryClientProvider>,
     );
   const view = mount();
   await screen.findByText("Private portfolio");
+  fireEvent.change(screen.getByLabelText("Unsubmitted edit"), { target: { value: "draft" } });
   mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
   await act(async () => window.dispatchEvent(new Event("offline")));
-  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(screen.getByText("Private portfolio")).toBeInTheDocument();
   expect(profileScope()).toBe("original-grant");
   mocks.command.mockResolvedValue(active);
   await act(async () => window.dispatchEvent(new Event("online")));
   expect(screen.getByText("Private portfolio")).toBeInTheDocument();
   expect(mocks.reload).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Unsubmitted edit")).toHaveValue("draft");
 
   let complete!: (response: Response) => void;
   vi.stubGlobal(

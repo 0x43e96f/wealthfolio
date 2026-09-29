@@ -221,16 +221,16 @@ export function ProfileShell({ children }: { children: ReactNode }) {
         }
       } catch (e) {
         if (!cancelled && requestEpoch === epoch.current) {
-          // Losing contact is not a lock request. Preserve the grant so a successful
-          // recheck can resume this document, but hide cached financial content.
-          if (profileFailureKind(e) === "session") revokeProfileSession();
+          const failure = profileFailureKind(e);
+          // A connection failure does not invalidate an already-open profile.
+          // Explicit locks/switches and confirmed expiry still close it.
+          if (failure === "connection" && phaseRef.current === "active") return;
+          if (failure === "session") revokeProfileSession();
           setCovered(true);
           setPhase("loading");
           setSelected(currentProfile.current);
           const message = String(e);
-          setError(
-            isWeb && profileFailureKind(e) === "connection" ? "PROFILE_CONNECTION_FAILED" : message,
-          );
+          setError(isWeb && failure === "connection" ? "PROFILE_CONNECTION_FAILED" : message);
         }
       } finally {
         inFlight = false;

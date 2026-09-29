@@ -1029,7 +1029,7 @@ it.each(["online", "offline", "wealthfolio:event-stream-error"])(
 );
 
 it.each([true, false])(
-  "covers an unavailable web session and resumes the same grant without locking (protected: %s)",
+  "keeps an open web session visible through an outage without locking (protected: %s)",
   async (lockEnabled) => {
     const active = { ...unlocked, profiles: [{ ...profile, lockEnabled }] };
     mocks.command.mockResolvedValue(active);
@@ -1037,9 +1037,8 @@ it.each([true, false])(
     await screen.findByText("Private portfolio");
     mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
     await act(async () => window.dispatchEvent(new Event("offline")));
-    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Connection interrupted");
-    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.getByText("Private portfolio")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     expect(mocks.command).not.toHaveBeenCalledWith("lock_profile", expect.anything());
     mocks.command.mockResolvedValue(active);
     await act(async () => window.dispatchEvent(new Event("online")));
@@ -1337,10 +1336,42 @@ it("resumes after an SSE reconnect without relying on a browser online event", a
   await screen.findByText("Private portfolio");
   mocks.command.mockRejectedValue(new Error("upstream unavailable"));
   await act(async () => window.dispatchEvent(new Event("wealthfolio:event-stream-error")));
-  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(screen.getByText("Private portfolio")).toBeInTheDocument();
   mocks.command.mockResolvedValue(unlocked);
   await act(async () => window.dispatchEvent(new Event("wealthfolio:event-stream-reconnected")));
   expect(screen.getByText("Private portfolio")).toBeInTheDocument();
   expect(mocks.reload).not.toHaveBeenCalled();
   expect(mocks.command).not.toHaveBeenCalledWith("lock_profile", expect.anything());
+});
+
+it.each(["Lock Wealthfolio", "Switch profile"])(
+  "keeps content hidden when %s fails offline",
+  async (action) => {
+    mocks.command.mockResolvedValue({
+      ...unlocked,
+      profiles: [
+        { ...profile, lockEnabled: true },
+        { ...profile, id: "b", name: "Family" },
+      ],
+    });
+    mount();
+    await screen.findByText("Private portfolio");
+    fireEvent.keyDown(screen.getByRole("button", { name: "Profile menu for Personal" }), {
+      key: "Enter",
+    });
+    const item = await screen.findByRole("menuitem", { name: action });
+    mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
+    fireEvent.click(item);
+    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: "Retry" });
+    await act(async () => window.dispatchEvent(new Event("online")));
+    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  },
+);
+
+it("keeps startup closed when the initial profile check fails", async () => {
+  mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
+  mount();
+  await screen.findByRole("button", { name: "Retry" });
+  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
 });

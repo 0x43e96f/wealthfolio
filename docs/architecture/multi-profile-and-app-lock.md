@@ -275,13 +275,15 @@ browser cookie. Tabs sharing an owner share lock/switch state. Other browsers
 remain independent. Profile lock does not log out instance authentication or
 stop server sync workers.
 
-The web shell covers its financial view when profile-state verification fails,
-including after a ten-second request timeout. It retains the session identity
-and rechecks on reconnect, stream errors, visibility changes, or explicit Retry.
-If the same grant is still valid, the view resumes without a reload; a confirmed
-expired or revoked grant remains closed. A failed check never requests a backend
-lock. Explicit lock requests still revoke locally immediately and have a
-ten-second deadline so Retry remains available when the server is unreachable.
+An already-open profile stays visible when profile-state verification fails,
+including after a ten-second request timeout. The shell retains the session
+identity and rechecks on reconnect, stream errors, visibility changes, or
+explicit Retry during startup. A confirmed expired or revoked grant closes the
+view; a connection error alone does not. Cached content can remain visible while
+disconnected after a server-side expiry, until verification succeeds. A failed
+check never requests a backend lock. Explicit lock and switch requests still
+revoke locally immediately and have a ten-second deadline so Retry remains
+available when the server is unreachable.
 
 User interaction updates the backend idle deadline at most once every thirty
 seconds for password-protected profiles, on both web and Tauri. Unprotected
