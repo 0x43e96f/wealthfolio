@@ -3373,7 +3373,7 @@ mod tests {
         assert_eq!(value["bond"]["customBond"], true);
         assert_eq!(value["bond"]["treasuryType"], "Bond");
         let bond: super::super::BondSpec = serde_json::from_value(value["bond"].clone()).unwrap();
-        assert!(bond.to_quote_metadata().unwrap().has_valid_treasury_terms());
+        assert!(bond.to_quote_metadata().has_valid_treasury_terms());
     }
 
     #[test]

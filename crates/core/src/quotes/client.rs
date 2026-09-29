@@ -465,8 +465,8 @@ impl MarketDataClient {
         // Preferred provider from asset
         let preferred_provider: Option<ProviderId> = asset.preferred_provider().map(Cow::Owned);
 
-        // Unknown coupon and frequency are not zero-coupon terms.
-        let bond_metadata = asset.bond_spec().and_then(|spec| spec.to_quote_metadata());
+        // Preserve partial metadata so providers can reject known unsupported types.
+        let bond_metadata = asset.bond_spec().map(|spec| spec.to_quote_metadata());
 
         // Extract custom_provider_code from provider_config if present
         let custom_provider_code = asset
@@ -1238,8 +1238,32 @@ mod tests {
             .bond
             .unwrap()
             .to_quote_metadata()
-            .unwrap()
             .has_valid_treasury_terms());
+    }
+
+    #[test]
+    fn incomplete_treasury_profile_preserves_type_in_quote_context() {
+        let client = create_test_client();
+        for kind in ["TIPS", "FRN"] {
+            let profile = MarketAssetProfile {
+                bond: Some(wealthfolio_market_data::BondProfile {
+                    isin: Some("US912810TH14".into()),
+                    treasury_type: Some(kind.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let converted = MarketDataClient::convert_profile(profile, "US912810TH14");
+            let mut asset = create_test_asset(AssetKind::Investment, "US912810TH14", "USD");
+            asset.instrument_type = Some(InstrumentType::Bond);
+            asset.metadata = Some(serde_json::json!({"bond": converted.bond.unwrap()}));
+            let context = client.build_quote_context(&asset).unwrap();
+            let metadata = context
+                .bond_metadata
+                .expect("partial metadata must survive");
+            assert_eq!(metadata.treasury_type.as_deref(), Some(kind));
+            assert!(!metadata.has_valid_treasury_terms());
+        }
     }
 
     #[test]
@@ -1376,7 +1400,7 @@ mod tests {
                 .build_quote_context(&asset)
                 .unwrap()
                 .bond_metadata
-                .is_none());
+                .is_some_and(|metadata| !metadata.has_valid_treasury_terms()));
         }
     }
 
@@ -1404,13 +1428,13 @@ mod tests {
         let bond_meta = context
             .bond_metadata
             .expect("bond_metadata should be populated");
-        assert_eq!(bond_meta.coupon_rate, dec!(0.04375));
+        assert_eq!(bond_meta.coupon_rate, Some(dec!(0.04375)));
         assert_eq!(
             bond_meta.maturity_date,
-            NaiveDate::from_ymd_opt(2040, 11, 15).unwrap()
+            NaiveDate::from_ymd_opt(2040, 11, 15)
         );
         assert_eq!(bond_meta.face_value, dec!(1000));
-        assert_eq!(bond_meta.coupon_frequency, "SEMI_ANNUAL");
+        assert_eq!(bond_meta.coupon_frequency.as_deref(), Some("SEMI_ANNUAL"));
     }
 
     #[test]
@@ -1544,12 +1568,12 @@ mod tests {
         let bond_meta = context
             .bond_metadata
             .expect("bond_metadata should be Some for zero-coupon bond");
-        assert_eq!(bond_meta.coupon_rate, dec!(0));
+        assert_eq!(bond_meta.coupon_rate, Some(dec!(0)));
         assert_eq!(
             bond_meta.maturity_date,
-            NaiveDate::from_ymd_opt(2025, 12, 18).unwrap()
+            NaiveDate::from_ymd_opt(2025, 12, 18)
         );
         assert_eq!(bond_meta.face_value, dec!(1000));
-        assert_eq!(bond_meta.coupon_frequency, "ZERO");
+        assert_eq!(bond_meta.coupon_frequency.as_deref(), Some("ZERO"));
     }
 }

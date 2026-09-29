@@ -562,30 +562,46 @@ fn parse_bond_details(item: TdSecurityItem) -> Result<TreasuryBondDetails, Marke
         face_value: Decimal::from(US_TREASURY_FACE_VALUE as i64),
     };
     if supported {
-        details.clone().into_quote_metadata()?;
+        details.clone().into_calculated_terms()?;
     }
     Ok(details)
 }
 
-fn validate_calculated_terms(
-    bond: &crate::models::BondQuoteMetadata,
-) -> Result<(), MarketDataError> {
-    if !bond.has_valid_treasury_terms() {
-        return Err(treasury_details_error(
-            "Confirmed nominal Treasury terms required for calculated pricing",
-        ));
+// Only validated, complete nominal terms reach the price calculator.
+struct CalculatedBondTerms {
+    coupon_rate: Decimal,
+    maturity_date: NaiveDate,
+    face_value: Decimal,
+    coupon_frequency: String,
+}
+
+impl TryFrom<&crate::models::BondQuoteMetadata> for CalculatedBondTerms {
+    type Error = MarketDataError;
+
+    fn try_from(bond: &crate::models::BondQuoteMetadata) -> Result<Self, Self::Error> {
+        if !bond.has_valid_treasury_terms() {
+            return Err(treasury_details_error(
+                "Confirmed nominal Treasury terms required for calculated pricing",
+            ));
+        }
+        let incomplete = || treasury_details_error("Incomplete Treasury terms");
+        Ok(Self {
+            coupon_rate: bond.coupon_rate.ok_or_else(incomplete)?,
+            maturity_date: bond.maturity_date.ok_or_else(incomplete)?,
+            face_value: bond.face_value,
+            coupon_frequency: bond.coupon_frequency.clone().ok_or_else(incomplete)?,
+        })
     }
-    Ok(())
 }
 
 // Resolve older assets on the quote path too: they may never enter broker sync.
 async fn resolve_calculated_terms(
     supplied: Option<&crate::models::BondQuoteMetadata>,
     fetch: impl std::future::Future<Output = Result<TreasuryBondDetails, MarketDataError>>,
-) -> Result<crate::models::BondQuoteMetadata, MarketDataError> {
+) -> Result<CalculatedBondTerms, MarketDataError> {
     if let Some(bond) = supplied {
-        if bond.has_valid_treasury_terms() {
-            return Ok(bond.clone());
+        if let Ok(terms) = CalculatedBondTerms::try_from(bond) {
+            return Ok(terms);
         }
         if bond
             .treasury_type
@@ -596,12 +612,17 @@ async fn resolve_calculated_terms(
         }
     }
     let details = fetch.await?;
-    details.into_quote_metadata()
+    details.into_calculated_terms()
 }
 
 impl TreasuryBondDetails {
     fn into_profile(self, isin: &str) -> AssetProfile {
+        let mut name = format!("United States Treasury {}", self.treasury_type);
+        if let Some(maturity) = self.maturity_date {
+            name.push_str(&format!(" {maturity}"));
+        }
         AssetProfile {
+            name: Some(name),
             source: Some(PROVIDER_ID.into()),
             isin: Some(isin.into()),
             quote_type: Some("BOND".into()),
@@ -618,17 +639,15 @@ impl TreasuryBondDetails {
         }
     }
 
-    fn into_quote_metadata(self) -> Result<crate::models::BondQuoteMetadata, MarketDataError> {
-        let incomplete = || treasury_details_error("Incomplete Treasury terms");
+    fn into_calculated_terms(self) -> Result<CalculatedBondTerms, MarketDataError> {
         let bond = crate::models::BondQuoteMetadata {
             treasury_type: Some(self.treasury_type),
-            coupon_rate: self.coupon_rate.ok_or_else(incomplete)?,
-            maturity_date: self.maturity_date.ok_or_else(incomplete)?,
+            coupon_rate: self.coupon_rate,
+            maturity_date: self.maturity_date,
             face_value: self.face_value,
-            coupon_frequency: self.coupon_frequency.ok_or_else(incomplete)?,
+            coupon_frequency: self.coupon_frequency,
         };
-        validate_calculated_terms(&bond)?;
-        Ok(bond)
+        CalculatedBondTerms::try_from(&bond)
     }
 }
 
@@ -1027,6 +1046,10 @@ mod tests {
                 .unwrap()
                 .into_profile("US912810TH14");
             assert_eq!(profile.source.as_deref(), Some(PROVIDER_ID));
+            assert_eq!(
+                profile.name,
+                Some(format!("United States Treasury {kind} 2043-05-15"))
+            );
             assert_eq!(profile.isin.as_deref(), Some("US912810TH14"));
             let bond = profile.bond.unwrap();
             assert_eq!(bond.treasury_type.as_deref(), Some(kind));
@@ -1047,9 +1070,9 @@ mod tests {
     async fn legacy_quote_terms_are_verified_on_demand() {
         let legacy = crate::models::BondQuoteMetadata {
             treasury_type: None,
-            coupon_rate: Decimal::ZERO,
-            maturity_date: NaiveDate::from_ymd_opt(2030, 1, 1).unwrap(),
-            coupon_frequency: "ZERO".into(),
+            coupon_rate: Some(Decimal::ZERO),
+            maturity_date: NaiveDate::from_ymd_opt(2030, 1, 1),
+            coupon_frequency: Some("ZERO".into()),
             face_value: dec!(1000),
         };
         for supplied in [None, Some(&legacy)] {
@@ -1057,14 +1080,13 @@ mod tests {
                 Ok(TreasuryBondDetails {
                     treasury_type: "Note".into(),
                     coupon_rate: Some(dec!(0.04)),
-                    maturity_date: Some(legacy.maturity_date),
+                    maturity_date: legacy.maturity_date,
                     coupon_frequency: Some("SEMI_ANNUAL".into()),
                     face_value: dec!(1000),
                 })
             })
             .await
             .unwrap();
-            assert!(verified.has_valid_treasury_terms());
             assert_eq!(verified.coupon_rate, dec!(0.04));
         }
         assert!(resolve_calculated_terms(Some(&legacy), async {
@@ -1088,28 +1110,90 @@ mod tests {
         .is_ok());
     }
 
+    #[tokio::test]
+    async fn incomplete_unsupported_terms_never_fetch() {
+        for kind in ["TIPS", "FRN", "STRIPS"] {
+            let metadata = crate::models::BondQuoteMetadata {
+                treasury_type: Some(kind.into()),
+                coupon_rate: None,
+                maturity_date: None,
+                face_value: dec!(1000),
+                coupon_frequency: None,
+            };
+            let result = resolve_calculated_terms(Some(&metadata), async {
+                panic!("known unsupported Treasury types must not request terms")
+            })
+            .await;
+            assert!(
+                matches!(result, Err(MarketDataError::ProviderError { message, .. })
+                if message == "Unsupported Treasury type")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn incomplete_nominal_terms_fetch_before_pricing() {
+        for kind in [None, Some("Note")] {
+            // Each missing field must prevent use of the supplied terms.
+            for missing in ["coupon", "maturity", "frequency"] {
+                let metadata = crate::models::BondQuoteMetadata {
+                    treasury_type: kind.map(str::to_string),
+                    coupon_rate: (missing != "coupon").then_some(dec!(0.01)),
+                    maturity_date: (missing != "maturity")
+                        .then(|| NaiveDate::from_ymd_opt(2030, 1, 1).unwrap()),
+                    face_value: dec!(1000),
+                    coupon_frequency: (missing != "frequency").then(|| "SEMI_ANNUAL".into()),
+                };
+                let terms = resolve_calculated_terms(Some(&metadata), async {
+                    Ok(TreasuryBondDetails {
+                        treasury_type: "Note".into(),
+                        coupon_rate: Some(dec!(0.04)),
+                        maturity_date: NaiveDate::from_ymd_opt(2030, 1, 1),
+                        face_value: dec!(1000),
+                        coupon_frequency: Some("SEMI_ANNUAL".into()),
+                    })
+                })
+                .await
+                .unwrap();
+                assert_eq!(terms.coupon_rate, dec!(0.04));
+            }
+        }
+    }
+
+    #[test]
+    fn incomplete_treasury_profile_still_has_a_name() {
+        let item = serde_json::from_value(serde_json::json!({
+            "cusip": "912810TH1", "type": "FRN",
+        }))
+        .unwrap();
+        let profile = parse_bond_details(item)
+            .unwrap()
+            .into_profile("US912810TH14");
+        assert_eq!(profile.name.as_deref(), Some("United States Treasury FRN"));
+    }
+
     #[test]
     fn treasury_pricing_requires_supported_confirmed_terms() {
         let mut bond = crate::models::BondQuoteMetadata {
             treasury_type: Some("Bond".into()),
-            coupon_rate: dec!(0.04),
-            maturity_date: NaiveDate::from_ymd_opt(2030, 1, 1).unwrap(),
-            coupon_frequency: "SEMI_ANNUAL".into(),
+            coupon_rate: Some(dec!(0.04)),
+            maturity_date: NaiveDate::from_ymd_opt(2030, 1, 1),
+            coupon_frequency: Some("SEMI_ANNUAL".into()),
             face_value: dec!(1000),
         };
-        assert!(validate_calculated_terms(&bond).is_ok());
+        assert!(CalculatedBondTerms::try_from(&bond).is_ok());
         for kind in [None, Some("TIPS"), Some("FRN"), Some("STRIPS")] {
             bond.treasury_type = kind.map(str::to_string);
-            assert!(validate_calculated_terms(&bond).is_err());
+            assert!(CalculatedBondTerms::try_from(&bond).is_err());
         }
         bond.treasury_type = Some("Bill".into());
-        assert!(validate_calculated_terms(&bond).is_err());
-        bond.coupon_rate = Decimal::ZERO;
-        bond.coupon_frequency = "ZERO".into();
-        assert!(validate_calculated_terms(&bond).is_ok());
+        assert!(CalculatedBondTerms::try_from(&bond).is_err());
+        bond.coupon_rate = Some(Decimal::ZERO);
+        bond.coupon_frequency = Some("ZERO".into());
+        assert!(CalculatedBondTerms::try_from(&bond).is_ok());
         // A nominal zero-rate long bond must not enter the bill discount formula.
         bond.treasury_type = Some("Bond".into());
-        assert!(validate_calculated_terms(&bond).is_err());
+        assert!(CalculatedBondTerms::try_from(&bond).is_err());
     }
 
     #[test]
