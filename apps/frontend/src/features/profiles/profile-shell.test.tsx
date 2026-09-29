@@ -1375,3 +1375,49 @@ it("keeps startup closed when the initial profile check fails", async () => {
   await screen.findByRole("button", { name: "Retry" });
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
 });
+
+it.each([false, true])(
+  "preserves the selected profile and unlock input through a connection failure (switching: %s)",
+  async (switching) => {
+    const profiles = [
+      { ...profile, lockEnabled: true },
+      { ...profile, id: "b", name: "Family", lockEnabled: true },
+    ];
+    const locked = { ...unlocked, profiles, session: null };
+    mocks.command.mockResolvedValue(switching ? { ...unlocked, profiles } : locked);
+    mount();
+    if (switching) {
+      await screen.findByText("Private portfolio");
+      fireEvent.keyDown(screen.getByRole("button", { name: "Profile menu for Personal" }), {
+        key: "Enter",
+      });
+      mocks.command.mockResolvedValue(locked);
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Switch profile" }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "Family" }));
+    const input = screen.getByLabelText("Password");
+    fireEvent.change(input, { target: { value: "unfinished password" } });
+    const callsBeforeOutage = mocks.command.mock.calls.length;
+    mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => window.dispatchEvent(new Event("offline")));
+    expect(screen.getByLabelText("Password")).toBe(input);
+    expect(input).toHaveValue("unfinished password");
+    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+    expect(
+      mocks.command.mock.calls
+        .slice(callsBeforeOutage)
+        .every(([name]) => name === "get_profile_state"),
+    ).toBe(true);
+    mocks.command.mockResolvedValue(locked);
+    await act(async () => window.dispatchEvent(new Event("online")));
+    expect(screen.getByLabelText("Password")).toBe(input);
+    expect(input).toHaveValue("unfinished password");
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() =>
+      expect(mocks.command).toHaveBeenCalledWith("unlock_profile", {
+        profileId: "b",
+        proof: "unfinished password",
+      }),
+    );
+  },
+);

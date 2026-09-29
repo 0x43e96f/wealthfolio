@@ -222,9 +222,13 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       } catch (e) {
         if (!cancelled && requestEpoch === epoch.current) {
           const failure = profileFailureKind(e);
-          // A connection failure does not invalidate an already-open profile.
-          // Explicit locks/switches and confirmed expiry still close it.
-          if (failure === "connection" && phaseRef.current === "active") return;
+          // Background connection failures must not replace an open profile or
+          // the user's current selection and form edits on the locked screen.
+          if (
+            failure === "connection" &&
+            (phaseRef.current === "active" || phaseRef.current === "locked")
+          )
+            return;
           if (failure === "session") revokeProfileSession();
           setCovered(true);
           setPhase("loading");
