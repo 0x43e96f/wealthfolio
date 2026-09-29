@@ -70,8 +70,6 @@ function clearSsoRedirectGuard() {
   }
 }
 
-const AUTH_CHECK_TIMEOUT_MS = 10_000;
-
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -110,7 +108,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     let cancelled = false;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS);
     let failure: AuthContextValue["statusError"] = "connection";
     const checkResponse = (response: Response) => {
       const authFailure = classifyAuthResponse(response);
@@ -174,7 +171,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         if (!cancelled) setStatusError(failure);
       } finally {
-        window.clearTimeout(timeout);
         if (!cancelled) setStatusLoading(false);
       }
     };
@@ -182,7 +178,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void loadStatus();
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
       controller.abort();
     };
   }, [statusAttempt, invalidateSession]);
@@ -192,7 +187,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (reason === "expired") invalidateSession();
       const hadSession = cookieSessionRef.current;
       setCookieSession(false);
-      retryStatus();
+      if (reason === "signIn" || (!requiresPassword && !oidcEnabled)) {
+        setStatusError("signIn");
+      }
       if (hadSession && reason === "expired") {
         setLoginError(t("auth:context.sessionExpired"));
       }
@@ -201,7 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, [retryStatus, t, invalidateSession]);
+  }, [requiresPassword, oidcEnabled, t, invalidateSession]);
 
   // Surface OIDC callback errors passed back as `?oidc_error=<code>`.
   useEffect(() => {

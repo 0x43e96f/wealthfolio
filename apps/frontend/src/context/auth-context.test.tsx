@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { notifyUnauthorized } from "@/lib/auth-token";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { revokeProfileSession, hasProfileSession } from "@/features/profiles/session";
+import { LoginPage } from "@/pages/auth/login-page";
 import { AuthGate, AuthProvider } from "./auth-context";
 
 vi.mock("@/adapters", () => ({ isWeb: true }));
@@ -12,11 +13,11 @@ vi.mock("@/features/profiles/session", () => ({
 }));
 const fetchMock = vi.fn<typeof fetch>();
 const status = (requiresPassword = true) => Response.json({ requiresPassword, oidcEnabled: false });
-const mount = (queries = new QueryClient()) =>
+const mount = (queries = new QueryClient(), fallback = <div>Sign in</div>) =>
   render(
     <QueryClientProvider client={queries}>
       <AuthProvider>
-        <AuthGate fallback={<div>Sign in</div>}>
+        <AuthGate fallback={fallback}>
           <div>Private portfolio</div>
         </AuthGate>
       </AuthProvider>
@@ -30,7 +31,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 it.each(["network", "server", "invalid JSON"])(
@@ -87,35 +87,59 @@ it.each(["status", "me"])(
   },
 );
 
-it.each(["status", "me"])("times out a stalled %s check and allows retry", async (endpoint) => {
-  vi.useFakeTimers();
-  if (endpoint === "me") fetchMock.mockResolvedValueOnce(status());
-  fetchMock.mockImplementationOnce(
-    (_url, options) =>
-      new Promise((_resolve, reject) => {
-        options?.signal?.addEventListener("abort", () =>
-          reject(new DOMException("Aborted", "AbortError")),
-        );
-      }),
-  );
-  mount();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(10_000);
-  });
-  expect(screen.getByRole("alert")).toHaveTextContent("Unable to verify your connection");
-  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
-});
-
-it("rechecks instance auth after an unauthorized request even when auth was previously disabled", async () => {
+it("requires manual recovery when auth requirements may have changed", async () => {
   fetchMock.mockResolvedValueOnce(status(false));
   mount();
   await screen.findByText("Private portfolio");
+  act(() => notifyUnauthorized());
+  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Reload to sign in" })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("returns an expired instance session to login without another auth check", async () => {
+  fetchMock
+    .mockResolvedValueOnce(status())
+    .mockResolvedValueOnce(Response.json({ authenticated: true }));
+  mount();
+  await screen.findByText("Private portfolio");
+  act(() => notifyUnauthorized());
+  expect(await screen.findByText("Sign in")).toBeInTheDocument();
+  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the login form intact when another request reports expiry", async () => {
   fetchMock
     .mockResolvedValueOnce(status())
     .mockResolvedValueOnce(new Response(null, { status: 401 }));
+  mount(undefined, <LoginPage />);
+  const input = await screen.findByTestId("login-password-input");
+  fireEvent.change(input, { target: { value: "synthetic-password" } });
   act(() => notifyUnauthorized());
-  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
-  expect(await screen.findByText("Sign in")).toBeInTheDocument();
+  expect(screen.getByTestId("login-password-input")).toHaveValue("synthetic-password");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("does not start a competing auth check when expiry is reported during login", async () => {
+  fetchMock
+    .mockResolvedValueOnce(status())
+    .mockResolvedValueOnce(new Response(null, { status: 401 }));
+  mount(undefined, <LoginPage />);
+  const input = await screen.findByTestId("login-password-input");
+  fireEvent.change(input, { target: { value: "synthetic-password" } });
+  let resolveLogin!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveLogin = resolve;
+      }),
+  );
+  fireEvent.submit(input.closest("form")!);
+  act(() => notifyUnauthorized());
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  await act(async () => resolveLogin(Response.json({ authenticated: true })));
+  expect(screen.getByText("Private portfolio")).toBeInTheDocument();
 });
 
 it("treats a proxy 524 HTML error as a connection failure", async () => {
@@ -168,17 +192,17 @@ it("does not revoke a never-admitted profile on the first sign-in", async () => 
   expect(revokeProfileSession).not.toHaveBeenCalled();
 });
 
-it("revokes immediately on a confirmed unauthorized notification before rechecking authentication", async () => {
+it("revokes immediately on confirmed expiry without rechecking authentication", async () => {
   const queries = new QueryClient();
   fetchMock.mockResolvedValueOnce(status(false));
   mount(queries);
   await screen.findByText("Private portfolio");
   vi.mocked(hasProfileSession).mockReturnValue(true);
   queries.setQueryData(["accounts"], "synthetic cached value");
-  fetchMock.mockImplementation(() => new Promise(() => {}));
   act(() => notifyUnauthorized());
   expect(revokeProfileSession).toHaveBeenCalledOnce();
   expect(queries.getQueryData(["accounts"])).toBeUndefined();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
 it("retains profile authority and cached queries when a proxy requires navigation without confirming expiry", async () => {
@@ -188,12 +212,10 @@ it("retains profile authority and cached queries when a proxy requires navigatio
   await screen.findByText("Private portfolio");
   vi.mocked(hasProfileSession).mockReturnValue(true);
   queries.setQueryData(["accounts"], "synthetic cached value");
-  fetchMock.mockResolvedValue(
-    new Response("<html>Sign in</html>", { headers: { "Content-Type": "text/html" } }),
-  );
   act(() => notifyUnauthorized("signIn"));
   await screen.findByRole("button", { name: "Reload to sign in" });
   expect(revokeProfileSession).not.toHaveBeenCalled();
   expect(queries.getQueryData(["accounts"])).toBe("synthetic cached value");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
 });

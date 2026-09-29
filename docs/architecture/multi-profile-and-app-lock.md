@@ -290,9 +290,10 @@ Transport errors do not revoke the local grant; failed activity updates trigger
 state reconciliation, while explicit locked/stale responses revoke it. Backend
 expiry remains authoritative and late activity cannot revive an expired grant.
 
-Instance authentication checks are bounded and keep financial content hidden
-when authentication cannot be verified. Confirmed authentication rejection
-returns to sign-in; external proxy sign-in redirects offer full-page recovery.
+Instance authentication is checked at startup or on explicit Retry and keeps
+financial content hidden when authentication cannot be verified. Confirmed
+authentication rejection returns to sign-in without starting another check;
+external proxy sign-in redirects offer full-page recovery.
 
 Middleware validates the browser owner and `x-wf-profile-scope`, then injects
 the fixed runtime into request extensions. SSE uses the cookie plus a non-secret
