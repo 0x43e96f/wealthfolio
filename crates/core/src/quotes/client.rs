@@ -39,8 +39,8 @@ use crate::secrets::SecretStore;
 use wealthfolio_market_data::{
     mic_to_currency, mic_to_exchange_name, yahoo_equity_provider_symbol_to_canonical,
     yahoo_exchange_to_mic, yahoo_suffix_to_mic, AlphaVantageProvider,
-    AssetProfile as MarketAssetProfile, BoerseFrankfurtProvider, BondQuoteMetadata, DividendEvent,
-    ExchangeMap, FinnhubProvider, FixtureProvider, MarketDataAppProvider, MetalPriceApiProvider,
+    AssetProfile as MarketAssetProfile, BoerseFrankfurtProvider, DividendEvent, ExchangeMap,
+    FinnhubProvider, FixtureProvider, MarketDataAppProvider, MetalPriceApiProvider,
     OpenFigiProvider, ProviderId, ProviderRegistry, Quote as MarketQuote, QuoteContext,
     QuoteIdentifiers, ResolverChain, SearchResult as MarketSearchResult, SplitEvent,
     UsTreasuryCalcProvider, YahooProvider,
@@ -466,15 +466,7 @@ impl MarketDataClient {
         let preferred_provider: Option<ProviderId> = asset.preferred_provider().map(Cow::Owned);
 
         // Unknown coupon and frequency are not zero-coupon terms.
-        let bond_metadata = asset.bond_spec().and_then(|spec| {
-            Some(BondQuoteMetadata {
-                treasury_type: spec.treasury_type,
-                coupon_rate: spec.coupon_rate?,
-                maturity_date: spec.maturity_date?,
-                face_value: spec.face_value.unwrap_or(rust_decimal::Decimal::from(1000)),
-                coupon_frequency: spec.coupon_frequency?,
-            })
-        });
+        let bond_metadata = asset.bond_spec().and_then(|spec| spec.to_quote_metadata());
 
         // Extract custom_provider_code from provider_config if present
         let custom_provider_code = asset

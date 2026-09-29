@@ -18,9 +18,18 @@ test("real bonds enter holdings with correct identity, terms, and quote eligibil
   const getAssets = async (): Promise<
     Array<{
       id: string;
+      name?: string;
+      displayCode?: string;
+      notes?: string;
+      kind?: string;
+      quoteMode?: string;
+      quoteCcy?: string;
       instrumentSymbol?: string;
       instrumentType?: string;
+      instrumentExchangeMic?: string;
+      providerConfig?: Record<string, unknown>;
       metadata?: {
+        identifiers?: { isin?: string };
         bond?: {
           treasuryType?: string;
           couponRate?: number;
@@ -109,6 +118,12 @@ test("real bonds enter holdings with correct identity, terms, and quote eligibil
     idempotencyKey: `${accountId}-apple-isin`,
   });
   expect(appleAlias.assetId).toBe(assetIds.apple);
+  await expect
+    .poll(async () => {
+      const assets = await getAssets();
+      return assets.find((asset) => asset.id === assetIds.apple)?.metadata?.identifiers?.isin;
+    })
+    .toBe(appleIsin);
 
   await expect
     .poll(
@@ -150,7 +165,10 @@ test("real bonds enter holdings with correct identity, terms, and quote eligibil
   });
   expect(refresh.status()).toBe(204);
   const latestQuotes = async (): Promise<
-    Record<string, { quote?: { close: number; currency: string; dataSource: string } | null }>
+    Record<
+      string,
+      { quote?: { id: string; close: number; currency: string; dataSource: string } | null }
+    >
   > => {
     return post("/market-data/quotes/latest", { assetIds: Object.values(assetIds) });
   };
@@ -174,6 +192,51 @@ test("real bonds enter holdings with correct identity, terms, and quote eligibil
   for (const label of ["tips", "frn", "apple"]) {
     expect(snapshots[assetIds[label]]?.quote?.dataSource).not.toBe("US_TREASURY_CALC");
   }
+
+  // A preexisting nominal Treasury can lose its type and retain legacy zero-coupon terms.
+  // Normal quote refresh must verify the terms even without a broker resync.
+  const note = (await getAssets()).find((asset) => asset.id === assetIds.note);
+  expect(note?.metadata?.bond).toBeTruthy();
+  const legacyMetadata = structuredClone(note!.metadata!);
+  delete legacyMetadata.bond!.treasuryType;
+  legacyMetadata.bond!.couponRate = 0;
+  legacyMetadata.bond!.couponFrequency = "ZERO";
+  const update = await page.request.put(`${api}/assets/profile/${assetIds.note}`, {
+    data: {
+      name: note!.name,
+      displayCode: note!.displayCode,
+      notes: note!.notes ?? "",
+      kind: note!.kind,
+      quoteMode: note!.quoteMode,
+      quoteCcy: note!.quoteCcy,
+      instrumentType: note!.instrumentType,
+      instrumentSymbol: note!.instrumentSymbol,
+      instrumentExchangeMic: note!.instrumentExchangeMic,
+      providerConfig: note!.providerConfig,
+      metadata: legacyMetadata,
+    },
+  });
+  expect(update.ok(), await update.text()).toBeTruthy();
+  const oldQuoteId = snapshots[assetIds.note]?.quote?.id;
+  expect(oldQuoteId).toBeTruthy();
+  const deleted = await page.request.delete(`${api}/market-data/quotes/id/${oldQuoteId}`);
+  expect(deleted.ok(), await deleted.text()).toBeTruthy();
+  const legacyRefresh = await page.request.post(`${api}/market-data/sync`, {
+    data: { assetIds: [assetIds.note], refetchAll: true },
+  });
+  expect(legacyRefresh.status()).toBe(204);
+  await expect
+    .poll(
+      async () => {
+        const quote = (await latestQuotes())[assetIds.note]?.quote;
+        return Boolean(quote && quote.id !== oldQuoteId && quote.dataSource === "US_TREASURY_CALC");
+      },
+      { timeout: 150_000 },
+    )
+    .toBe(true);
+  expect(
+    (await getAssets()).find((asset) => asset.id === assetIds.note)?.metadata?.bond?.treasuryType,
+  ).toBeUndefined();
 
   const recalc = await page.request.post(`${api}/portfolio/recalculate`);
   expect(recalc.status()).toBe(202);

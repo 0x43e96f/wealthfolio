@@ -29,6 +29,19 @@ pub struct BondQuoteMetadata {
     pub coupon_frequency: String,
 }
 
+impl BondQuoteMetadata {
+    pub fn has_valid_treasury_terms(&self) -> bool {
+        let valid_coupon = match self.treasury_type.as_deref() {
+            Some("Bill") => self.coupon_rate.is_zero() && self.coupon_frequency == "ZERO",
+            Some("Note" | "Bond") => {
+                self.coupon_rate > Decimal::ZERO && self.coupon_frequency == "SEMI_ANNUAL"
+            }
+            _ => false,
+        };
+        valid_coupon && self.face_value > Decimal::ZERO
+    }
+}
+
 /// Request context for quote fetching
 #[derive(Clone, Debug)]
 pub struct QuoteContext {

@@ -139,7 +139,11 @@ impl BondIdentityClaims {
 
 /// Resolve only unambiguous bond aliases, considering the whole batch before
 /// assigning any asset IDs. Exact identities and explicit IDs retain precedence.
-pub(crate) fn resolve_bond_aliases(specs: &mut [AssetSpec], existing_assets: &[Asset]) {
+/// Return matched asset IDs and unambiguous ISINs for callers to retain or forward.
+pub(crate) fn resolve_bond_aliases(
+    specs: &mut [AssetSpec],
+    existing_assets: &[Asset],
+) -> HashMap<String, String> {
     let stored: Vec<_> = existing_assets
         .iter()
         .filter(|a| a.instrument_type == Some(InstrumentType::Bond))
@@ -207,6 +211,22 @@ pub(crate) fn resolve_bond_aliases(specs: &mut [AssetSpec], existing_assets: &[A
             _ => {}
         }
     }
+    // Retain authoritative ISINs for matched CUSIP assets without renaming them.
+    specs
+        .iter()
+        .zip(&incoming)
+        .filter_map(|(spec, claims)| {
+            let id = spec.id.as_ref()?;
+            let group = claims.unique_group()?;
+            let isins = isins_by_group.get(group)?;
+            if conflicting_groups.contains(group) || isins.len() != 1 {
+                return None;
+            }
+            let (_, stored_claims) = stored.iter().find(|(asset, _)| &asset.id == id)?;
+            (stored_claims.unique_group() == Some(group))
+                .then(|| (id.clone(), isins.iter().next().unwrap().clone()))
+        })
+        .collect()
 }
 
 /// Use a validated, non-conflicting identifier for Treasury lookup.
@@ -234,22 +254,14 @@ fn needs_treasury_enrichment(asset: &Asset) -> bool {
         .bond_spec()
         .is_none_or(|spec| match spec.treasury_type.as_deref() {
             None => true,
-            Some("Bill") => {
-                spec.coupon_rate != Some(rust_decimal::Decimal::ZERO)
-                    || spec.coupon_frequency.as_deref() != Some("ZERO")
-                    || spec.maturity_date.is_none()
-            }
-            Some("Note" | "Bond") => {
-                spec.coupon_rate
-                    .is_none_or(|rate| rate <= rust_decimal::Decimal::ZERO)
-                    || spec.coupon_frequency.as_deref() != Some("SEMI_ANNUAL")
-                    || spec.maturity_date.is_none()
-            }
+            Some("Bill" | "Note" | "Bond") => spec
+                .to_quote_metadata()
+                .is_none_or(|terms| !terms.has_valid_treasury_terms()),
             Some(_) => false, // Unsupported types are a completed lookup, not a transient failure.
         })
 }
 
-/// Merge into the latest metadata, retaining populated fields and unknown keys.
+/// Merge into the latest metadata, retaining unrelated fields and unknown keys.
 fn merge_treasury_details(
     metadata: &mut Option<serde_json::Value>,
     isin: &str,
@@ -278,21 +290,15 @@ fn merge_treasury_details(
         .as_object_mut()
         .ok_or_else(|| Error::Asset("Invalid bond metadata object".into()))?;
     let verified_type = values["treasuryType"].as_str().unwrap();
+    let nominal = matches!(verified_type, "Bill" | "Note" | "Bond");
     for (key, value) in values.as_object().unwrap() {
-        let invalid_legacy_term = match (verified_type, key.as_str(), bond.get(key)) {
-            ("Bill", "couponRate", Some(old)) => {
-                serde_json::from_value::<rust_decimal::Decimal>(old.clone())
-                    .is_ok_and(|rate| !rate.is_zero())
-            }
-            ("Note" | "Bond", "couponRate", Some(old)) => {
-                serde_json::from_value::<rust_decimal::Decimal>(old.clone())
-                    .is_ok_and(|rate| rate <= rust_decimal::Decimal::ZERO)
-            }
-            ("Bill", "couponFrequency", Some(old)) => old.as_str() != Some("ZERO"),
-            ("Note" | "Bond", "couponFrequency", Some(old)) => old.as_str() != Some("SEMI_ANNUAL"),
-            _ => false,
-        };
-        if !value.is_null() && (bond.get(key).is_none_or(|v| v.is_null()) || invalid_legacy_term) {
+        let confirmed_term = key == "treasuryType"
+            || (nominal
+                && matches!(
+                    key.as_str(),
+                    "couponRate" | "couponFrequency" | "maturityDate"
+                ));
+        if !value.is_null() && (confirmed_term || bond.get(key).is_none_or(|v| v.is_null())) {
             bond.insert(key.clone(), value.clone());
         }
     }
@@ -1399,6 +1405,44 @@ impl AssetService {
 }
 
 impl AssetService {
+    async fn retain_bond_isin(&self, asset_id: &str, isin: &str) -> Result<Asset> {
+        let asset = self.asset_repository.get_by_id(asset_id)?;
+        let stored =
+            BondIdentityClaims::new(asset.instrument_symbol.as_deref(), asset.metadata.as_ref());
+        let incoming = BondIdentityClaims::new(Some(isin), None);
+        if !asset.is_bond()
+            || stored.unique_group().is_none()
+            || stored.unique_group() != incoming.unique_group()
+            || stored.isins.iter().any(|old| old != isin)
+            || Self::metadata_identifier(asset.metadata.as_ref(), "isin")
+                .is_some_and(|stored_isin| crate::utils::isin::parse_isin(stored_isin).is_ok())
+        {
+            return Ok(asset);
+        }
+        let mut metadata = asset
+            .metadata
+            .clone()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let Some(root) = metadata.as_object_mut() else {
+            return Ok(asset);
+        };
+        let identifiers = root
+            .entry("identifiers")
+            .or_insert_with(|| serde_json::json!({}));
+        if identifiers.is_null() {
+            *identifiers = serde_json::json!({});
+        }
+        let Some(identifiers) = identifiers.as_object_mut() else {
+            return Ok(asset);
+        };
+        identifiers.insert("isin".into(), serde_json::json!(isin));
+        self.update_asset_profile(
+            asset_id,
+            UpdateAssetProfile::metadata_only(&asset, metadata),
+        )
+        .await
+    }
+
     async fn enrich_asset_profile_silent(&self, asset_id: &str) -> Result<AssetEnrichmentOutcome> {
         // Get the existing asset
         let existing_asset = self.asset_repository.get_by_id(asset_id)?;
@@ -1451,6 +1495,9 @@ impl AssetService {
             || latest_asset.instrument_symbol != existing_asset.instrument_symbol
             || latest_asset.quote_mode != existing_asset.quote_mode
             || treasury_isin(&latest_asset) != treasury_isin(&existing_asset)
+            || (treasury_lookup.is_some()
+                && latest_asset.metadata.as_ref().and_then(|m| m.get("bond"))
+                    != existing_asset.metadata.as_ref().and_then(|m| m.get("bond")))
         {
             return Err(Error::Asset(
                 "Asset changed during enrichment; retry with its current identity".into(),
@@ -1664,7 +1711,7 @@ impl AssetServiceTrait for AssetService {
                 spec
             })
             .collect();
-        resolve_bond_aliases(&mut bond_specs, &local_index.assets);
+        let matched_bond_isins = resolve_bond_aliases(&mut bond_specs, &local_index.assets);
         let bond_ids: HashMap<_, _> = inputs
             .iter()
             .filter(|input| input.instrument_type == Some(InstrumentType::Bond))
@@ -1795,9 +1842,10 @@ impl AssetServiceTrait for AssetService {
                 )
             };
             if let Some(asset) = local_existing_asset {
-                let canonical_symbol = asset
-                    .instrument_symbol
-                    .clone()
+                let canonical_symbol = matched_bond_isins
+                    .get(&asset.id)
+                    .cloned()
+                    .or_else(|| asset.instrument_symbol.clone())
                     .or_else(|| asset.display_code.clone())
                     .unwrap_or_else(|| local_canonical_symbol.clone());
                 let exchange_mic = asset
@@ -2438,6 +2486,31 @@ impl AssetServiceTrait for AssetService {
                     existing_asset.is_active = true;
                 }
 
+                if inferred_instrument_type == Some(InstrumentType::Bond) {
+                    if let Some(meta) = metadata.as_ref() {
+                        if let Some(symbol) = meta
+                            .instrument_symbol
+                            .as_ref()
+                            .or(meta.display_code.as_ref())
+                        {
+                            let mut spec = AssetSpec::market_instrument(
+                                symbol.clone(),
+                                symbol.clone(),
+                                None,
+                                InstrumentType::Bond,
+                                existing_asset.quote_ccy.clone(),
+                            );
+                            spec.metadata = meta.asset_metadata.clone();
+                            let isins = resolve_bond_aliases(
+                                std::slice::from_mut(&mut spec),
+                                &self.get_assets()?,
+                            );
+                            if let Some(isin) = isins.get(asset_id) {
+                                return self.retain_bond_isin(asset_id, isin).await;
+                            }
+                        }
+                    }
+                }
                 return Ok(existing_asset);
             }
             Err(Error::Database(DatabaseError::NotFound(_))) => {
@@ -2849,12 +2922,14 @@ impl AssetServiceTrait for AssetService {
             .iter()
             .map(|spec| spec.id.clone().or_else(|| spec.instrument_key()))
             .collect();
-        if specs
+        let matched_bond_isins = if specs
             .iter()
-            .any(|spec| spec.instrument_type == Some(InstrumentType::Bond) && spec.id.is_none())
+            .any(|spec| spec.instrument_type == Some(InstrumentType::Bond))
         {
-            resolve_bond_aliases(&mut specs, &self.get_assets()?);
-        }
+            resolve_bond_aliases(&mut specs, &self.get_assets()?)
+        } else {
+            HashMap::new()
+        };
         let input_to_resolved_key: Vec<(Option<String>, Option<String>)> = input_keys
             .into_iter()
             .zip(&specs)
@@ -3126,6 +3201,11 @@ impl AssetServiceTrait for AssetService {
             }
         }
 
+        for (asset_id, isin) in matched_bond_isins {
+            let asset = self.retain_bond_isin(&asset_id, &isin).await?;
+            assets_map.insert(asset_id, asset);
+        }
+
         // Existing Treasuries can still need terms after a failed fetch or an
         // upgrade from metadata without a verified type. Reuse enrichment on
         // the next sync; new assets are handled by the normal creation event.
@@ -3172,8 +3252,8 @@ mod tests {
         QuoteCcyResolutionSource, UpdateAssetProfile,
     };
     use super::{
-        needs_treasury_enrichment, resolve_bond_aliases, AssetRepositoryTrait, AssetService,
-        AssetServiceTrait, QuoteMode,
+        merge_treasury_details, needs_treasury_enrichment, resolve_bond_aliases,
+        AssetRepositoryTrait, AssetService, AssetServiceTrait, QuoteMode,
     };
     use crate::assets::AssetResolutionInput;
     use crate::errors::{DatabaseError, Error, Result};
@@ -3328,6 +3408,87 @@ mod tests {
         assert_eq!(result[0].existing_asset_id.as_deref(), Some("broker-bond"));
     }
 
+    #[tokio::test]
+    async fn existing_cusip_asset_retains_incoming_isin_for_quotes() {
+        let asset = Asset {
+            id: "apple-bond".into(),
+            is_active: true,
+            instrument_symbol: Some("037833EZ9".into()),
+            instrument_key: Some("BOND:037833EZ9".into()),
+            instrument_type: Some(InstrumentType::Bond),
+            quote_ccy: "USD".into(),
+            metadata: Some(
+                serde_json::json!({"custom": true, "identifiers": {"isin": "INVALID"}, "bond": {"couponRate": 0.05}}),
+            ),
+            ..Default::default()
+        };
+        let service = test_asset_service(vec![asset], TestQuoteService::default());
+        let mut input = import_input("US037833EZ91", "USD");
+        input.instrument_type = Some(InstrumentType::Bond);
+        let preview = service
+            .resolve_import_asset_inputs(vec![input])
+            .await
+            .unwrap();
+        assert_eq!(preview[0].existing_asset_id.as_deref(), Some("apple-bond"));
+        assert_eq!(preview[0].canonical_symbol.as_deref(), Some("US037833EZ91"));
+        assert_eq!(
+            service
+                .get_asset_by_id("apple-bond")
+                .unwrap()
+                .metadata
+                .unwrap()["identifiers"]["isin"],
+            "INVALID"
+        );
+        let metadata = super::super::AssetMetadata {
+            instrument_type: Some(InstrumentType::Bond),
+            instrument_symbol: Some("US037833EZ91".into()),
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            let asset = service
+                .get_or_create_minimal_asset(
+                    "apple-bond",
+                    Some("USD".into()),
+                    Some(metadata.clone()),
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(asset.id, "apple-bond");
+            assert_eq!(asset.instrument_symbol.as_deref(), Some("037833EZ9"));
+            assert_eq!(
+                asset.metadata.as_ref().unwrap()["identifiers"]["isin"],
+                "US037833EZ91"
+            );
+            assert_eq!(asset.metadata.as_ref().unwrap()["custom"], true);
+            assert_eq!(
+                asset.bond_spec().unwrap().coupon_rate,
+                Some(Decimal::new(5, 2))
+            );
+            assert!(
+                matches!(asset.to_instrument_id(), Some(super::super::InstrumentId::Bond { isin }) if isin.as_ref() == "US037833EZ91")
+            );
+        }
+    }
+
+    #[test]
+    fn conflicting_batch_isins_are_not_retained_on_an_existing_cusip() {
+        let cusip = "135087D27";
+        let stored = Asset {
+            id: "stored".into(),
+            instrument_type: Some(InstrumentType::Bond),
+            instrument_symbol: Some(cusip.into()),
+            instrument_key: Some(format!("BOND:{cusip}")),
+            ..Default::default()
+        };
+        let mut specs = ["US", "CA"].map(|country| {
+            let mut spec = bond_spec_for(&crate::utils::cusip::cusip_to_isin(cusip, country));
+            spec.id = Some("stored".into());
+            spec
+        });
+        assert!(resolve_bond_aliases(&mut specs, &[stored]).is_empty());
+    }
+
     fn treasury_test_asset() -> Asset {
         Asset {
             id: "treasury".into(),
@@ -3352,7 +3513,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn treasury_enrichment_retries_without_profile_and_preserves_concurrent_edits() {
+    async fn treasury_enrichment_retries_without_profile_and_concurrent_edits() {
         let repo = Arc::new(TestAssetRepository::with_assets(
             vec![treasury_test_asset()],
         ));
@@ -3377,15 +3538,31 @@ mod tests {
                 .enrich_assets(vec!["treasury".into()])
                 .await
                 .unwrap(),
-            (1, 0, 0)
+            (0, 0, 1)
         );
         let asset = repo.get_by_id("treasury").unwrap();
         let bond = asset.bond_spec().unwrap();
         assert_eq!(bond.coupon_rate, Some(Decimal::new(7, 2)));
-        assert_eq!(bond.treasury_type.as_deref(), Some("Bond"));
-        assert!(bond.maturity_date.is_some());
+        assert_eq!(bond.treasury_type, None);
         assert_eq!(asset.notes.as_deref(), Some("User edit during fetch"));
         assert_eq!(asset.metadata.unwrap()["custom"], true);
+        quotes
+            .treasury_responses
+            .lock()
+            .unwrap()
+            .push_back(Some(treasury_details("Bond")));
+        assert_eq!(
+            service
+                .enrich_assets(vec!["treasury".into()])
+                .await
+                .unwrap(),
+            (1, 0, 0)
+        );
+        let asset = repo.get_by_id("treasury").unwrap();
+        let bond = asset.bond_spec().unwrap();
+        assert_eq!(bond.coupon_rate, Some(Decimal::new(5, 2)));
+        assert_eq!(bond.treasury_type.as_deref(), Some("Bond"));
+        assert_eq!(asset.notes.as_deref(), Some("User edit during fetch"));
         assert_eq!(
             service
                 .enrich_assets(vec!["treasury".into()])
@@ -3468,6 +3645,23 @@ mod tests {
                 &repo.get_by_id("treasury").unwrap()
             ));
         }
+    }
+
+    #[test]
+    fn treasury_enrichment_uses_confirmed_nominal_pricing_terms() {
+        let mut metadata = Some(serde_json::json!({
+            "custom": true,
+            "bond": {
+                "couponRate": 0.07,
+                "couponFrequency": "SEMI_ANNUAL",
+                "maturityDate": "2041-01-01"
+            }
+        }));
+        merge_treasury_details(&mut metadata, "US912810TH14", treasury_details("Bond")).unwrap();
+        let bond = metadata.unwrap();
+        assert_eq!(bond["bond"]["couponRate"], serde_json::json!(0.05));
+        assert_eq!(bond["bond"]["maturityDate"], "2043-05-15");
+        assert_eq!(bond["custom"], true);
     }
 
     #[test]

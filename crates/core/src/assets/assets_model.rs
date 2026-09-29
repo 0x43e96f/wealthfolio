@@ -226,6 +226,18 @@ pub struct BondSpec {
     pub isin: Option<String>,
 }
 
+impl BondSpec {
+    pub fn to_quote_metadata(&self) -> Option<wealthfolio_market_data::BondQuoteMetadata> {
+        Some(wealthfolio_market_data::BondQuoteMetadata {
+            treasury_type: self.treasury_type.clone(),
+            coupon_rate: self.coupon_rate?,
+            maturity_date: self.maturity_date?,
+            face_value: self.face_value.unwrap_or(Decimal::from(1000)),
+            coupon_frequency: self.coupon_frequency.clone()?,
+        })
+    }
+}
+
 /// Builds structured asset metadata (OptionSpec, BondSpec) for the given instrument type.
 ///
 /// Returns `Some(Value)` when the instrument type is Option or Bond and metadata
