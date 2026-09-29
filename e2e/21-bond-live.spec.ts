@@ -217,10 +217,12 @@ test("real bonds enter holdings with correct identity, terms, and quote eligibil
     },
   });
   expect(update.ok(), await update.text()).toBeTruthy();
-  const oldQuoteId = snapshots[assetIds.note]?.quote?.id;
-  expect(oldQuoteId).toBeTruthy();
+  const oldQuote = snapshots[assetIds.note]?.quote;
+  expect(oldQuote).toBeTruthy();
+  const oldQuoteId = oldQuote!.id;
   const deleted = await page.request.delete(`${api}/market-data/quotes/id/${oldQuoteId}`);
   expect(deleted.ok(), await deleted.text()).toBeTruthy();
+  expect((await latestQuotes())[assetIds.note]?.quote?.id).not.toBe(oldQuoteId);
   const legacyRefresh = await page.request.post(`${api}/market-data/sync`, {
     data: { assetIds: [assetIds.note], refetchAll: true },
   });
@@ -229,14 +231,18 @@ test("real bonds enter holdings with correct identity, terms, and quote eligibil
     .poll(
       async () => {
         const quote = (await latestQuotes())[assetIds.note]?.quote;
-        return Boolean(quote && quote.id !== oldQuoteId && quote.dataSource === "US_TREASURY_CALC");
+        // Quote IDs are stable for an asset, date, and provider. Older quotes
+        // must not satisfy this check while the deleted quote is being restored.
+        return Boolean(quote && quote.id === oldQuoteId && quote.dataSource === "US_TREASURY_CALC");
       },
       { timeout: 150_000 },
     )
     .toBe(true);
-  expect(
-    (await getAssets()).find((asset) => asset.id === assetIds.note)?.metadata?.bond?.treasuryType,
-  ).toBeUndefined();
+  const restoredQuote = (await latestQuotes())[assetIds.note]?.quote;
+  expect(Number(restoredQuote?.close)).toBe(Number(oldQuote!.close));
+  expect((await getAssets()).find((asset) => asset.id === assetIds.note)?.metadata).toEqual(
+    legacyMetadata,
+  );
 
   const recalc = await page.request.post(`${api}/portfolio/recalculate`);
   expect(recalc.status()).toBe(202);

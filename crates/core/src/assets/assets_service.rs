@@ -1661,7 +1661,7 @@ impl AssetServiceTrait for AssetService {
                             .groups
                             .is_empty()
                     });
-            let local_existing_asset = if bond_match.is_some() || has_bond_identifier {
+            let local_existing_asset = if has_bond_identifier {
                 bond_match
             } else {
                 local_index.find_for_import_input(
@@ -3135,6 +3135,14 @@ mod tests {
 
     #[tokio::test]
     async fn bond_import_reuses_mic_qualified_broker_symbol() {
+        let unqualified = Asset {
+            id: "unqualified-bond".into(),
+            instrument_type: Some(InstrumentType::Bond),
+            instrument_symbol: Some("ABC".into()),
+            instrument_key: Some("BOND:ABC".into()),
+            quote_ccy: "USD".into(),
+            ..Default::default()
+        };
         let stored = Asset {
             id: "broker-bond".into(),
             instrument_type: Some(InstrumentType::Bond),
@@ -3144,7 +3152,7 @@ mod tests {
             quote_ccy: "CAD".into(),
             ..Default::default()
         };
-        let service = test_asset_service(vec![stored], TestQuoteService::default());
+        let service = test_asset_service(vec![unqualified, stored], TestQuoteService::default());
         let mut input = import_input("ABC", "CAD");
         input.instrument_type = Some(InstrumentType::Bond);
         input.exchange_mic = Some("XTSE".into());
@@ -3153,6 +3161,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result[0].existing_asset_id.as_deref(), Some("broker-bond"));
+        assert_eq!(result[0].exchange_mic.as_deref(), Some("XTSE"));
+        assert_eq!(result[0].quote_ccy.as_deref(), Some("CAD"));
     }
 
     #[tokio::test]
