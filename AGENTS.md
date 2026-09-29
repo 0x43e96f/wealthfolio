@@ -30,12 +30,12 @@ with a React frontend, Tauri desktop/mobile runtime, and Axum web server.
 
 Before implementation, trace the affected execution path and identify whether
 proposed changes alter network calls or provider settings, synchronous versus
-background execution, persistence or events, ownership of business logic, failure
-propagation, retries, or user-edit precedence.
+background execution, persistence or events, ownership of business logic,
+failure propagation, retries, or user-edit precedence.
 
-For small fixes and behavior-preserving refactors, preserve these boundaries.
-If a boundary change is necessary, explain the previous and proposed behavior,
-why the existing mechanism is insufficient, and the required validation before
+For small fixes and behavior-preserving refactors, preserve these boundaries. If
+a boundary change is necessary, explain the previous and proposed behavior, why
+the existing mechanism is insufficient, and the required validation before
 proceeding. Include an explicit **Architecture impact** note in the plan and PR
 description: either name the boundaries that remain unchanged, or describe the
 changes and their validation. Revisit this note if the implementation expands.
