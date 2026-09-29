@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { profileCommand, PROFILE_STATE_TIMEOUT_MS, isProfileSessionRejection } from "./api";
+import { profileCommand, PROFILE_STATE_TIMEOUT_MS, profileFailureKind } from "./api";
 
 const broadcast = vi.hoisted(() => {
   const postMessage = vi.fn();
@@ -121,21 +121,21 @@ it.each([423, 500, 503])(
   async (status) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("PROFILE_LOCKED", { status })));
     const error = await profileCommand("profile_activity").catch((error: unknown) => error);
-    expect(isProfileSessionRejection(error)).toBe(status === 423);
+    expect(profileFailureKind(error)).toBe(status === 423 ? "session" : "domain");
   },
 );
 
 it.each(["PROFILE_LOCKED", "PROFILE_STALE: session changed"])(
   "recognizes native rejection %s",
   (error) => {
-    expect(isProfileSessionRejection(error)).toBe(true);
+    expect(profileFailureKind(error)).toBe("session");
   },
 );
 
 it.each(["Failed to fetch", "PROFILE_UNAVAILABLE", "PROFILE_ORIGIN_REJECTED"])(
   "does not revoke for %s",
   (error) => {
-    expect(isProfileSessionRejection(new Error(error))).toBe(false);
+    expect(profileFailureKind(new Error(error))).not.toBe("session");
   },
 );
 
@@ -146,7 +146,7 @@ it("notifies instance authentication on 401 without reporting a profile lock", a
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unauthorized", { status: 401 })));
   try {
     await expect(profileCommand("get_profile_state")).rejects.toThrow("PROFILE_AUTH_REQUIRED");
-    expect(unauthorized).toHaveBeenCalledOnce();
+    expect(unauthorized).toHaveBeenCalledExactlyOnceWith("expired");
   } finally {
     setUnauthorizedHandler(null);
   }
@@ -164,4 +164,24 @@ it("recognizes an auth proxy HTML page but not a Cloudflare error page as sign-i
     new Response("<html>Timeout</html>", { status: 524, headers: { "Content-Type": "text/html" } }),
   );
   await expect(profileCommand("get_profile_state")).rejects.not.toThrow("PROFILE_AUTH_REQUIRED");
+});
+
+it("notifies proxy navigation consistently without treating it as confirmed expiry", async () => {
+  const { setUnauthorizedHandler } = await import("@/lib/auth-token");
+  const unauthorized = vi.fn();
+  setUnauthorizedHandler(unauthorized);
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response("<html>Sign in</html>", { headers: { "Content-Type": "text/html" } }),
+      ),
+  );
+  try {
+    await expect(profileCommand("get_profile_state")).rejects.toThrow("PROFILE_AUTH_REQUIRED");
+    expect(unauthorized).toHaveBeenCalledExactlyOnceWith("signIn");
+  } finally {
+    setUnauthorizedHandler(null);
+  }
 });

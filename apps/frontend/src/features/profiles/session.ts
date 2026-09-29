@@ -1,4 +1,4 @@
-import { notifyUnauthorized } from "@/lib/auth-token";
+import { classifyAuthResponse, notifyUnauthorized } from "@/lib/auth-token";
 import { deferApplicationReload, reloadApplication } from "@/lib/reload-application";
 
 // Immutable for the lifetime of a financial application load. Old async work
@@ -25,6 +25,9 @@ export function installProfileSession(session: ProfileSession, isLegacy = false)
   admitted = Object.freeze({ ...session, isLegacy });
   return true;
 }
+export function hasProfileSession(): boolean {
+  return admitted !== undefined && !revoked;
+}
 export function profileScope(): string {
   if (!admitted || revoked) throw new Error("PROFILE_LOCKED");
   return admitted.scopeId;
@@ -45,11 +48,8 @@ export async function profileFetch(
   const headers = new Headers(init.headers);
   headers.set("x-wf-profile-scope", profileScope());
   const response = await fetch(input, { ...init, headers });
-  if (
-    response.redirected ||
-    (response.ok && response.headers.get("content-type")?.includes("text/html"))
-  ) {
-    notifyUnauthorized();
+  if (classifyAuthResponse(response) === "signIn") {
+    notifyUnauthorized("signIn");
     throw new Error("PROFILE_AUTH_REQUIRED");
   }
   if (response.status === 423) revokeProfileSession();

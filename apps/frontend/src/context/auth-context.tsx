@@ -1,8 +1,9 @@
-import { revokeProfileSession } from "@/features/profiles/session";
+import { revokeProfileSession, hasProfileSession } from "@/features/profiles/session";
 import { isWeb } from "@/adapters";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { reloadApplication } from "@/lib/reload-application";
-import { setUnauthorizedHandler } from "@/lib/auth-token";
+import { classifyAuthResponse, setUnauthorizedHandler, type AuthFailure } from "@/lib/auth-token";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
   useCallback,
@@ -75,6 +76,14 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
+  const queries = useQueryClient();
+  const invalidateSession = useCallback(() => {
+    // AuthGate can unmount ProfileShell. Revoke and clear here even without its listener.
+    // A first-time sign-in has no profile grant to revoke.
+    if (hasProfileSession()) revokeProfileSession();
+    void queries.cancelQueries();
+    queries.clear();
+  }, [queries]);
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [oidcEnabled, setOidcEnabled] = useState(false);
   const [statusLoading, setStatusLoading] = useState(isWeb);
@@ -104,11 +113,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const timeout = window.setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS);
     let failure: AuthContextValue["statusError"] = "connection";
     const checkResponse = (response: Response) => {
-      if (
-        response.status === 401 ||
-        response.redirected ||
-        (response.ok && response.headers.get("content-type")?.includes("text/html"))
-      ) {
+      const authFailure = classifyAuthResponse(response);
+      if (authFailure) {
+        if (!cancelled && authFailure === "expired") invalidateSession();
         failure = "signIn";
         throw new Error("Authentication endpoint requires navigation");
       }
@@ -142,8 +149,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             signal: controller.signal,
           });
           // Only an explicit rejection establishes that sign-in is needed.
-          if (meRes.status === 401 && !meRes.redirected) {
-            if (!cancelled) setCookieSession(false);
+          if (classifyAuthResponse(meRes) === "expired") {
+            if (!cancelled) {
+              invalidateSession();
+              setCookieSession(false);
+            }
             return;
           }
           checkResponse(meRes);
@@ -175,14 +185,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [statusAttempt]);
+  }, [statusAttempt, invalidateSession]);
 
   useEffect(() => {
-    const handler = () => {
+    const handler = (reason: AuthFailure) => {
+      if (reason === "expired") invalidateSession();
       const hadSession = cookieSessionRef.current;
       setCookieSession(false);
       retryStatus();
-      if (hadSession) {
+      if (hadSession && reason === "expired") {
         setLoginError(t("auth:context.sessionExpired"));
       }
     };
@@ -190,7 +201,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, [retryStatus, t]);
+  }, [retryStatus, t, invalidateSession]);
 
   // Surface OIDC callback errors passed back as `?oidc_error=<code>`.
   useEffect(() => {
@@ -245,7 +256,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    revokeProfileSession();
+    invalidateSession();
     if (isWeb) {
       try {
         window.sessionStorage.setItem(SSO_REDIRECT_GUARD_STORAGE_KEY, "1");
@@ -266,7 +277,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setCookieSession(false);
     setLoginError(null);
-  }, [oidcEnabled]);
+  }, [oidcEnabled, invalidateSession]);
 
   const clearError = useCallback(() => setLoginError(null), []);
 

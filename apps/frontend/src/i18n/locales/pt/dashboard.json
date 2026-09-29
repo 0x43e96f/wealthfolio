@@ -106,7 +106,7 @@
     "values_without_returns": "Os valores das contas são exibidos sem a rentabilidade do período.",
     "failed_to_load": "Erro ao carregar as contas",
     "failed_to_load_performance": "Erro ao carregar as métricas de desempenho",
-    "try_restarting": "Verifique sua conexão e tente novamente. Se o problema persistir, verifique os logs do servidor ou entre em contato com seu administrador."
+    "try_restarting": "Tente novamente. Se o problema persistir, reinicie o Wealthfolio ou entre em contato com o suporte."
   },
   "accounts_count_one": "{{count}} conta",
   "accounts_count_other": "{{count}} contas",

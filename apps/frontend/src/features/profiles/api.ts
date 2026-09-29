@@ -1,7 +1,8 @@
-import { notifyUnauthorized } from "@/lib/auth-token";
+import { classifyAuthResponse, notifyUnauthorized } from "@/lib/auth-token";
 import { isWeb } from "@/adapters";
 import { profileScope } from "./session";
 import type { ProfileSession } from "./session";
+import { profileErrorCode } from "./error-messages";
 
 export const PROFILE_STATE_TIMEOUT_MS = 10_000;
 
@@ -14,11 +15,17 @@ class ProfileRequestError extends Error {
   }
 }
 
-/** Only explicit session rejection is authority to revoke; transport failures are not. */
-export function isProfileSessionRejection(error: unknown): boolean {
-  if (error instanceof ProfileRequestError && error.status !== 423) return false;
-  const message = error instanceof Error ? error.message : String(error);
-  return /^(?:PROFILE_LOCKED|PROFILE_STALE)(?::|$)/.test(message);
+/** Keep transport failures distinct from confirmed rejection and domain errors. */
+export function profileFailureKind(error: unknown): "session" | "connection" | "auth" | "domain" {
+  const code = profileErrorCode(error);
+  if (!code || code === "PROFILE_CONNECTION_FAILED") return "connection";
+  if (code === "PROFILE_AUTH_REQUIRED") return "auth";
+  if (
+    (code === "PROFILE_LOCKED" || code === "PROFILE_STALE") &&
+    (!(error instanceof ProfileRequestError) || error.status === 423)
+  )
+    return "session";
+  return "domain";
 }
 // One channel per JS context prevents commands from notifying their own shell.
 export const profileChangesChannel =
@@ -79,12 +86,9 @@ export async function profileCommand<T>(
       body: JSON.stringify(payload),
       signal: controller?.signal,
     });
-    // An external auth proxy may redirect to an HTML sign-in page, even with HTTP 200.
-    if (res.redirected || (res.ok && res.headers.get("content-type")?.includes("text/html"))) {
-      throw new Error("PROFILE_AUTH_REQUIRED");
-    }
-    if (res.status === 401) {
-      notifyUnauthorized();
+    const authFailure = classifyAuthResponse(res);
+    if (authFailure) {
+      notifyUnauthorized(authFailure);
       throw new Error("PROFILE_AUTH_REQUIRED");
     }
     if (!res.ok) throw new ProfileRequestError(await res.text(), res.status);

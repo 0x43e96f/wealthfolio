@@ -1,12 +1,18 @@
 import type { TFunction } from "i18next";
 
+/** Normalize codes once for both native string errors and HTTP error messages. */
+export function profileErrorCode(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return /\b(?:PROFILE_[A-Z_]+|CONNECT_[A-Z_]+)\b/.exec(message)?.[0];
+}
+
 /** Keep diagnostic codes in state; render only curated, translated copy. */
 export function profileErrorMessage(error: unknown, t: TFunction<"common">): string {
   if (error == null || error === "") return "";
   if (!(error instanceof Error) && typeof error !== "string") return t("profiles.errors.generic");
   const raw = error instanceof Error ? error.message : error;
   if (!raw) return "";
-  const code = /\b(?:PROFILE_[A-Z_]+|CONNECT_[A-Z_]+)\b/.exec(raw)?.[0];
+  const code = profileErrorCode(error);
   switch (code) {
     case "PROFILE_COOLDOWN": {
       const seconds = /PROFILE_COOLDOWN:\s*Try again in (\d+) seconds?\b/.exec(raw)?.[1];

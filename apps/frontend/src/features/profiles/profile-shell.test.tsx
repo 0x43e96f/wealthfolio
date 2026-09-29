@@ -38,6 +38,7 @@ vi.mock("./api", async (importOriginal) => ({
 vi.mock("./auth-bridge", () => ({ isNativeAuthPending: () => false }));
 vi.mock("./session", () => ({
   installProfileSession: mocks.admitted,
+  hasProfileSession: () => false,
   profileScope: () => "scope",
   revokeProfileSession: () => window.dispatchEvent(new Event("wealthfolio:profile-locked")),
 }));

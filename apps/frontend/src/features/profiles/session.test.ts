@@ -131,7 +131,7 @@ it("routes a proxy sign-in page to auth recovery without revoking the profile, b
   vi.stubGlobal("fetch", fetch);
   try {
     await expect(session.profileFetch("/api/v1/accounts")).rejects.toThrow("PROFILE_AUTH_REQUIRED");
-    expect(unauthorized).toHaveBeenCalledOnce();
+    expect(unauthorized).toHaveBeenCalledExactlyOnceWith("signIn");
     expect(session.profileScope()).toBe("scope-a");
     fetch.mockResolvedValue(
       new Response("<html>Timeout</html>", {
@@ -140,7 +140,7 @@ it("routes a proxy sign-in page to auth recovery without revoking the profile, b
       }),
     );
     expect((await session.profileFetch("/api/v1/accounts")).status).toBe(524);
-    expect(unauthorized).toHaveBeenCalledOnce();
+    expect(unauthorized).toHaveBeenCalledExactlyOnceWith("signIn");
     expect(session.profileScope()).toBe("scope-a");
   } finally {
     setUnauthorizedHandler(null);

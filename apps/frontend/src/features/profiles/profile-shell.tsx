@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { DATABASE_STATE_CHANGED } from "../../adapters/tauri/events";
-import { profileErrorMessage } from "./error-messages";
+import { profileErrorCode, profileErrorMessage } from "./error-messages";
 import { clearProfilePreferences } from "@/hooks/use-persistent-state";
 import { DeleteProfileDialog } from "./delete-profile-dialog";
 import { StartupScreen } from "@/components/startup-screen";
@@ -15,7 +15,7 @@ import { PasswordInput } from "@wealthfolio/ui/components/ui/password-input";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import {
   profileCommand,
-  isProfileSessionRejection,
+  profileFailureKind,
   profileChangesChannel,
   type ProfileState,
   type ProfileSummary,
@@ -28,6 +28,7 @@ import { ProfileContext } from "./profile-context";
 import {
   installProfileSession,
   profileScope,
+  hasProfileSession,
   revokeProfileSession,
   type ProfileSession,
 } from "./session";
@@ -56,7 +57,6 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   const epoch = useRef(0);
   const working = useRef(false);
   const currentProfile = useRef<ProfileSummary | undefined>(undefined);
-  const hasAdmittedSession = useRef(false);
   const refreshRef = useRef<(() => void) | undefined>(undefined);
   const needsClose = useRef(false);
   const [closeFailed, setCloseFailed] = useState(false);
@@ -76,6 +76,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   const [avatar, setAvatar] = useState(DEFAULT_PROFILE_AVATAR);
   const [mode, setMode] = useState<"choose" | "create" | "unlock" | "manage" | "recover">("choose");
   const [error, setError] = useState("");
+  const errorCode = profileErrorCode(error);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const deletion = useRef<{ profileId: string; confirmation: string } | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -106,7 +107,6 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       try {
         await profileCommand("lock_profile", { preserveAuth });
         needsClose.current = false;
-        hasAdmittedSession.current = false;
         setState((old) => (old ? { ...old, session: null } : old));
         setMode("choose");
         setPhase("locked");
@@ -175,7 +175,6 @@ export function ProfileShell({ children }: { children: ReactNode }) {
           setError("");
           if (isWeb) void listenPortfolioUpdateStart(keepEventStreamOpen).catch(() => undefined);
           currentProfile.current = profile;
-          hasAdmittedSession.current = true;
           setState(next);
           setCovered(false);
           setPhase("active");
@@ -189,7 +188,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
           if (
             needsClose.current ||
             phaseRef.current === "active" ||
-            (isWeb && hasAdmittedSession.current)
+            (isWeb && hasProfileSession())
           ) {
             needsClose.current = false;
             setState(next);
@@ -199,7 +198,6 @@ export function ProfileShell({ children }: { children: ReactNode }) {
             }
             // Web has no teardown to join, and the server already has no session.
             // Locking it again could revoke a session another tab just opened.
-            hasAdmittedSession.current = false;
             revokeProfileSession();
             needsClose.current = false;
             setSelected(currentProfile.current);
@@ -225,12 +223,14 @@ export function ProfileShell({ children }: { children: ReactNode }) {
         if (!cancelled && requestEpoch === epoch.current) {
           // Losing contact is not a lock request. Preserve the grant so a successful
           // recheck can resume this document, but hide cached financial content.
-          if (isProfileSessionRejection(e)) revokeProfileSession();
+          if (profileFailureKind(e) === "session") revokeProfileSession();
           setCovered(true);
           setPhase("loading");
           setSelected(currentProfile.current);
           const message = String(e);
-          setError(isWeb && !message.includes("PROFILE_") ? "PROFILE_CONNECTION_FAILED" : message);
+          setError(
+            isWeb && profileFailureKind(e) === "connection" ? "PROFILE_CONNECTION_FAILED" : message,
+          );
         }
       } finally {
         inFlight = false;
@@ -327,7 +327,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       void profileCommand("profile_activity", { scopeId: profileScope() }, true)
         .catch((error: unknown) => {
           if (requestEpoch !== epoch.current || phaseRef.current !== "active") return;
-          if (isProfileSessionRejection(error)) revokeProfileSession();
+          if (profileFailureKind(error) === "session") revokeProfileSession();
           else refreshRef.current?.();
         })
         .finally(() => {
@@ -617,8 +617,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
             ? t("profiles.lockFailed", { defaultValue: "Couldn’t finish locking" })
             : phase === "closing"
               ? t("profiles.locking", { defaultValue: "Locking Wealthfolio…" })
-              : error.includes("PROFILE_CONNECTION_FAILED") ||
-                  error.includes("PROFILE_AUTH_REQUIRED")
+              : errorCode === "PROFILE_CONNECTION_FAILED" || errorCode === "PROFILE_AUTH_REQUIRED"
                 ? t("profiles.connectionFailed")
                 : undefined
         }
@@ -629,14 +628,15 @@ export function ProfileShell({ children }: { children: ReactNode }) {
               setError("");
               if (
                 isWeb &&
-                (error === "PROFILE_SESSION_INTERRUPTED" || error.includes("PROFILE_AUTH_REQUIRED"))
+                (errorCode === "PROFILE_SESSION_INTERRUPTED" ||
+                  errorCode === "PROFILE_AUTH_REQUIRED")
               )
                 reloadApplication();
               else if (closeFailed) void lock(false, intent.current);
               else refreshRef.current?.();
             }}
           >
-            {error.includes("PROFILE_AUTH_REQUIRED") ? t("profiles.signInAgain") : t("retry")}
+            {errorCode === "PROFILE_AUTH_REQUIRED" ? t("profiles.signInAgain") : t("retry")}
           </Button>
         )}
       </StartupScreen>

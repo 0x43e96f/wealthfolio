@@ -100,7 +100,7 @@
     "values_without_returns": "期間リターンを除いた口座の評価額を表示しています。",
     "failed_to_load": "口座の読み込みに失敗しました",
     "failed_to_load_performance": "パフォーマンス指標の読み込みに失敗しました",
-    "try_restarting": "接続を確認して、もう一度お試しください。問題が解決しない場合は、サーバーログを確認するか、管理者にお問い合わせください。"
+    "try_restarting": "もう一度お試しください。問題が解決しない場合は、Wealthfolioを再起動するか、サポートにお問い合わせください。"
   },
   "accounts_count_one": "{{count}}口座",
   "accounts_count_other": "{{count}}口座"
