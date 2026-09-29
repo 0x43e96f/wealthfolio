@@ -41,7 +41,7 @@ fn map_quote_type_to_instrument_type(quote_type: &str, name: Option<&str>) -> Op
             if name.is_some_and(is_government_bond) {
                 Some("BOND_GOVERNMENT")
             } else {
-                Some("BOND_CORPORATE")
+                Some("DEBT_SECURITY")
             }
         }
         "MONEYMARKET" => Some("MONEY_MARKET_DEBT"),
@@ -881,6 +881,12 @@ mod tests {
                         &AssetKind::Investment,
                     )
                     .await;
+                let profile =
+                    ClassificationInput::from_provider_profile(ProviderProfileClassification {
+                        quote_type: Some("BOND"),
+                        ..Default::default()
+                    });
+                classifier.classify_asset("bond-1", &profile).await.unwrap();
                 let assignments = service.assignments_for("bond-1", INSTRUMENT_TYPE_TAXONOMY);
                 assert_eq!(assignments.len(), 1);
                 assert_eq!(
@@ -917,10 +923,10 @@ mod tests {
             map_quote_type_to_instrument_type("CRYPTOCURRENCY", None),
             Some("CRYPTO_NATIVE")
         );
-        // Bond without name defaults to corporate
+        // A generic provider bond type does not establish the issuer subtype.
         assert_eq!(
             map_quote_type_to_instrument_type("BOND", None),
-            Some("BOND_CORPORATE")
+            Some("DEBT_SECURITY")
         );
         // Bond with government name
         assert_eq!(
@@ -931,10 +937,10 @@ mod tests {
             map_quote_type_to_instrument_type("BOND", Some("GOVT OF CANADA 2.75 12/01/48")),
             Some("BOND_GOVERNMENT")
         );
-        // Bond with corporate name stays corporate
+        // Names alone do not reliably distinguish corporate and municipal issuers.
         assert_eq!(
             map_quote_type_to_instrument_type("BOND", Some("APPLE INC 3.0 06/20/27")),
-            Some("BOND_CORPORATE")
+            Some("DEBT_SECURITY")
         );
         assert_eq!(
             map_quote_type_to_instrument_type("MONEYMARKET", None),

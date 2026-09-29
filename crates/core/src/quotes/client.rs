@@ -871,6 +871,14 @@ impl MarketDataClient {
         });
 
         ProviderProfile {
+            bond: profile.bond.map(|bond| crate::assets::BondSpec {
+                isin: bond.isin,
+                treasury_type: bond.treasury_type,
+                coupon_rate: bond.coupon_rate,
+                maturity_date: bond.maturity_date,
+                face_value: bond.face_value,
+                coupon_frequency: bond.coupon_frequency,
+            }),
             id: Some(symbol.to_string()),
             isin: profile.isin,
             name: profile.name,
@@ -1192,6 +1200,46 @@ mod tests {
             registry,
             provider_configuration: Vec::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn disabled_treasury_provider_is_not_used_even_when_preferred() {
+        // The registry contains only enabled providers. A preference must not
+        // instantiate a disabled provider for either profiles or quotes.
+        let client = create_test_client();
+        let mut asset = create_test_asset(AssetKind::Investment, "US912810TH14", "USD");
+        asset.instrument_type = Some(InstrumentType::Bond);
+        asset.provider_config = Some(serde_json::json!({"preferred_provider": "US_TREASURY_CALC"}));
+        assert_eq!(
+            asset.preferred_provider().as_deref(),
+            Some("US_TREASURY_CALC")
+        );
+        assert!(client.get_profile(&asset).await.is_err());
+        assert!(client.fetch_latest_quote(&asset).await.is_err());
+    }
+
+    #[test]
+    fn bond_profile_terms_survive_client_conversion() {
+        let profile = MarketAssetProfile {
+            source: Some("US_TREASURY_CALC".into()),
+            bond: Some(wealthfolio_market_data::BondProfile {
+                isin: Some("US912810TH14".into()),
+                treasury_type: Some("Bond".into()),
+                coupon_rate: Some(dec!(0.05)),
+                maturity_date: chrono::NaiveDate::from_ymd_opt(2043, 5, 15),
+                face_value: Some(dec!(1000)),
+                coupon_frequency: Some("SEMI_ANNUAL".into()),
+            }),
+            ..Default::default()
+        };
+        let converted = MarketDataClient::convert_profile(profile, "US912810TH14");
+        assert_eq!(converted.data_source, "US_TREASURY_CALC");
+        assert!(converted
+            .bond
+            .unwrap()
+            .to_quote_metadata()
+            .unwrap()
+            .has_valid_treasury_terms());
     }
 
     #[test]

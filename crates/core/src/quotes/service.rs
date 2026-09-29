@@ -542,21 +542,6 @@ pub trait QuoteServiceTrait: Send + Sync {
     /// (e.g., "VFV.TO" for Yahoo when exchange_mic is XTSE).
     async fn get_asset_profile(&self, asset: &Asset) -> Result<ProviderProfile>;
 
-    /// Authoritative Treasury terms, independent of generic security profiles.
-    async fn get_treasury_bond_details(
-        &self,
-        isin: &str,
-    ) -> Result<wealthfolio_market_data::TreasuryBondDetails> {
-        wealthfolio_market_data::UsTreasuryCalcProvider::fetch_bond_details(
-            &wealthfolio_http::client(),
-            isin,
-        )
-        .await
-        .map_err(|e| {
-            Error::MarketData(crate::quotes::MarketDataError::ProviderError(e.to_string()))
-        })
-    }
-
     /// Fetch historical quotes from provider.
     async fn fetch_quotes_from_provider(
         &self,
@@ -1716,37 +1701,7 @@ where
         );
 
         for attempt_symbol in symbol_resolution_candidates(clean_symbol) {
-            // For bonds, populate metadata with TreasuryDirect details so
-            // US_TREASURY_CALC can price them during resolve.
-            let bond_metadata = if instrument_type == Some(&InstrumentType::Bond) {
-                let upper = attempt_symbol.to_uppercase();
-                let isin = crate::utils::cusip::normalize_bond_identifier(&upper);
-                if isin.starts_with("US912") {
-                    let http = wealthfolio_http::client();
-                    wealthfolio_market_data::provider::us_treasury_calc::UsTreasuryCalcProvider::fetch_bond_details(&http, &isin).await.ok()
-                        .map(|details| {
-                            let spec = crate::assets::BondSpec {
-                                treasury_type: Some(details.treasury_type),
-                                isin: Some(isin.clone()),
-                                coupon_rate: details.coupon_rate,
-                                maturity_date: details.maturity_date,
-                                face_value: Some(details.face_value),
-                                coupon_frequency: details.coupon_frequency,
-                            };
-                            (isin, serde_json::json!({ "bond": spec }))
-                        })
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            let (resolved_symbol, metadata) = match &bond_metadata {
-                Some((isin, meta)) => (isin.clone(), Some(meta.clone())),
-                None => (attempt_symbol.clone(), None),
-            };
-
+            let resolved_symbol = attempt_symbol.clone();
             let pair_quote_ccy = if matches!(instrument_type, Some(InstrumentType::Crypto)) {
                 parse_crypto_pair_symbol(&resolved_symbol).map(|(_, quote)| quote)
             } else {
@@ -1789,7 +1744,7 @@ where
                     .or_else(|| Some(attempt_symbol.clone())),
                 instrument_exchange_mic: canonical_identity.instrument_exchange_mic,
                 provider_config: provider_config.clone(),
-                metadata,
+                metadata: None,
                 ..Default::default()
             };
 

@@ -10,8 +10,7 @@
 //! 3. Interpolate the yield at the bond's remaining maturity.
 //! 4. Discount coupon + principal cash flows to get PV as fraction-of-par.
 //!
-//! Also exposes a TreasuryDirect auction-data lookup so the core crate can
-//! enrich bonds that are missing coupon/maturity metadata.
+//! Supplies TreasuryDirect bond terms through the standard provider profile interface.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
@@ -23,7 +22,9 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::errors::MarketDataError;
-use crate::models::{Coverage, InstrumentKind, ProviderInstrument, Quote, QuoteContext};
+use crate::models::{
+    AssetProfile, BondProfile, Coverage, InstrumentKind, ProviderInstrument, Quote, QuoteContext,
+};
 use crate::provider::{MarketDataProvider, ProviderCapabilities, RateLimit};
 
 const PROVIDER_ID: &str = "US_TREASURY_CALC";
@@ -75,7 +76,7 @@ type YearCurves = Vec<(NaiveDate, YieldCurve)>;
 
 /// Bond details returned by the TreasuryDirect API.
 #[derive(Debug, Clone)]
-pub struct TreasuryBondDetails {
+struct TreasuryBondDetails {
     /// TreasuryDirect `type` distinguishes nominal notes from TIPS and FRNs.
     pub treasury_type: String,
     pub coupon_rate: Option<Decimal>,
@@ -128,9 +129,8 @@ impl UsTreasuryCalcProvider {
         }
     }
 
-    /// Fetch terms independently of generic profile providers. Errors leave
-    /// enrichment retryable; recognized unsupported types still return metadata.
-    pub async fn fetch_bond_details(
+    /// Fetch authoritative terms for profiles and calculated quotes.
+    async fn fetch_bond_details(
         client: &reqwest::Client,
         isin: &str,
     ) -> Result<TreasuryBondDetails, MarketDataError> {
@@ -351,7 +351,7 @@ impl MarketDataProvider for UsTreasuryCalcProvider {
             supports_latest: true,
             supports_historical: true,
             supports_search: false,
-            supports_profile: false,
+            supports_profile: true,
             supports_dividends: false,
         }
     }
@@ -362,6 +362,12 @@ impl MarketDataProvider for UsTreasuryCalcProvider {
             max_concurrency: 5,
             min_delay: Duration::from_millis(500),
         }
+    }
+
+    async fn get_profile(&self, symbol: &str) -> Result<AssetProfile, MarketDataError> {
+        guard_us_treasury(symbol)?;
+        let details = Self::fetch_bond_details(&self.client, symbol).await?;
+        Ok(details.into_profile(symbol))
     }
 
     async fn get_latest_quote(
@@ -594,6 +600,24 @@ async fn resolve_calculated_terms(
 }
 
 impl TreasuryBondDetails {
+    fn into_profile(self, isin: &str) -> AssetProfile {
+        AssetProfile {
+            source: Some(PROVIDER_ID.into()),
+            isin: Some(isin.into()),
+            quote_type: Some("BOND".into()),
+            currency: Some("USD".into()),
+            bond: Some(BondProfile {
+                isin: Some(isin.into()),
+                treasury_type: Some(self.treasury_type),
+                coupon_rate: self.coupon_rate,
+                maturity_date: self.maturity_date,
+                face_value: Some(self.face_value),
+                coupon_frequency: self.coupon_frequency,
+            }),
+            ..Default::default()
+        }
+    }
+
     fn into_quote_metadata(self) -> Result<crate::models::BondQuoteMetadata, MarketDataError> {
         let incomplete = || treasury_details_error("Incomplete Treasury terms");
         let bond = crate::models::BondQuoteMetadata {
@@ -941,7 +965,7 @@ mod tests {
         assert!(caps.supports_latest);
         assert!(caps.supports_historical);
         assert!(!caps.supports_search);
-        assert!(!caps.supports_profile);
+        assert!(caps.supports_profile);
     }
 
     #[test]
@@ -988,6 +1012,35 @@ mod tests {
             assert_eq!(details.coupon_rate, None);
         }
         assert!(parse_bond_details(fixture("", "4", "2030-01-01")).is_err());
+    }
+
+    #[test]
+    fn treasury_profile_carries_terms_including_unsupported_types() {
+        for kind in ["Bill", "Note", "Bond", "TIPS", "FRN"] {
+            let item = serde_json::from_value(serde_json::json!({
+                "cusip": "912810TH1", "type": kind,
+                "interestRate": if matches!(kind, "TIPS" | "FRN") { "" } else { "5" },
+                "maturityDate": "2043-05-15", "interestPaymentFrequency": "Semi-Annual",
+            }))
+            .unwrap();
+            let profile = parse_bond_details(item)
+                .unwrap()
+                .into_profile("US912810TH14");
+            assert_eq!(profile.source.as_deref(), Some(PROVIDER_ID));
+            assert_eq!(profile.isin.as_deref(), Some("US912810TH14"));
+            let bond = profile.bond.unwrap();
+            assert_eq!(bond.treasury_type.as_deref(), Some(kind));
+            assert_eq!(bond.maturity_date, NaiveDate::from_ymd_opt(2043, 5, 15));
+            if matches!(kind, "TIPS" | "FRN") {
+                assert!(bond.coupon_rate.is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn non_treasury_profile_is_rejected_before_fetching() {
+        let provider = UsTreasuryCalcProvider::new();
+        assert!(provider.get_profile("US037833EZ91").await.is_err());
     }
 
     #[tokio::test]

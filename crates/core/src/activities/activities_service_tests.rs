@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::accounts::{Account, AccountServiceTrait, AccountUpdate, NewAccount};
     use crate::activities::activities_model::*;
     use crate::activities::{
@@ -1315,7 +1315,7 @@ mod tests {
 
     // --- Mock ActivityRepository ---
     #[derive(Clone, Default)]
-    struct MockActivityRepository {
+    pub(crate) struct MockActivityRepository {
         activities: Arc<Mutex<Vec<Activity>>>,
     }
 
