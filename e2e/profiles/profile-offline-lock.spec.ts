@@ -68,22 +68,19 @@ for (const protectedProfile of [false, true]) {
     };
     page.on("request", countStateReads);
     await page.waitForTimeout(10_000);
-    page.off("request", countStateReads);
     expect(stateReads).toBe(0);
-    const failedRead = page.waitForEvent("requestfailed", {
-      predicate: (request) => request.url().endsWith("/profiles/get_profile_state"),
-    });
     try {
       // No clicks, keys, navigation, focus changes, or synthetic activity events:
-      // a failed state re-check must leave the already-open portfolio visible.
+      // going offline must leave the already-open portfolio visible without a state request.
       await context.setOffline(true);
-      await failedRead;
+      await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
       await expect(page.locator(".app-shell").first()).toBeVisible();
       await expect(
         page.getByRole("link", { name: "Synthetic private account", exact: true }),
       ).toBeVisible();
       await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
       await page.screenshot({ path: info.outputPath("offline-visible.png"), fullPage: true });
+      expect(stateReads).toBe(0);
       await context.setOffline(false);
       await expect(
         page.getByRole("link", { name: "Synthetic private account", exact: true }),
@@ -97,6 +94,7 @@ for (const protectedProfile of [false, true]) {
       await page.screenshot({ path: info.outputPath("failure.png"), fullPage: true });
       throw error;
     } finally {
+      page.off("request", countStateReads);
       await context.setOffline(false);
     }
   });

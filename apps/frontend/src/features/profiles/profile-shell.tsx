@@ -250,7 +250,9 @@ export function ProfileShell({ children }: { children: ReactNode }) {
     const visibleRefresh = () => {
       if (document.visibilityState !== "hidden") void refresh();
     };
-    const wake = () => void refresh();
+    const wake = () => {
+      if (navigator.onLine) void refresh();
+    };
     const profileChanged = (event: MessageEvent) => {
       if (event.data === "changed") void refresh();
     };
@@ -258,7 +260,6 @@ export function ProfileShell({ children }: { children: ReactNode }) {
     const webEvents = [
       [document, "visibilitychange", visibleRefresh],
       [window, "online", wake],
-      [window, "offline", wake],
       [window, "wealthfolio:event-stream-error", wake],
       [window, "wealthfolio:event-stream-reconnected", wake],
     ] as const;
@@ -322,21 +323,16 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!sessionScope || covered || !profileProtected) return;
     let last = 0;
-    let inFlight = false;
     const activity = (event: Event) => {
-      if (!event.isTrusted || inFlight || Date.now() - last < PROFILE_ACTIVITY_INTERVAL_MS) return;
+      if (!event.isTrusted || Date.now() - last < PROFILE_ACTIVITY_INTERVAL_MS) return;
       last = Date.now();
-      inFlight = true;
       const requestEpoch = epoch.current;
-      void profileCommand("profile_activity", { scopeId: profileScope() }, true)
-        .catch((error: unknown) => {
+      void profileCommand("profile_activity", { scopeId: profileScope() }, true).catch(
+        (error: unknown) => {
           if (requestEpoch !== epoch.current || phaseRef.current !== "active") return;
           if (profileFailureKind(error) === "session") revokeProfileSession();
-          else refreshRef.current?.();
-        })
-        .finally(() => {
-          inFlight = false;
-        });
+        },
+      );
     };
     for (const event of ["pointerdown", "keydown", "touchstart", "wheel"])
       window.addEventListener(event, activity, { passive: true });
@@ -344,7 +340,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       for (const event of ["pointerdown", "keydown", "touchstart", "wheel"])
         window.removeEventListener(event, activity);
     };
-  }, [sessionScope, covered, lock, profileProtected]);
+  }, [sessionScope, covered, profileProtected]);
 
   useEffect(() => {
     if (

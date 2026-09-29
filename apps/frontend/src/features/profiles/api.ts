@@ -66,10 +66,10 @@ export async function profileCommand<T>(
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke<T>(command, { ...payload, ...(scoped ? { scopeId: profileScope() } : {}) });
   }
-  // State reads must not leave cached financial screens open indefinitely.
+  // Bound state reads so startup Retry remains usable if the server is unreachable.
   // Bound web locking too, so its existing retry screen remains usable offline.
   const controller =
-    command === "get_profile_state" || command === "lock_profile" || command === "profile_activity"
+    command === "get_profile_state" || command === "lock_profile"
       ? new AbortController()
       : undefined;
   const timeout = controller

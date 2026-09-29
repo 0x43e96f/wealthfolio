@@ -21,32 +21,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each(["get_profile_state", "lock_profile", "profile_activity"])(
-  "bounds a hanging %s request",
-  async (command) => {
-    vi.useFakeTimers();
-    let signal: AbortSignal | undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((_url, options: RequestInit) => {
-        signal = options.signal!;
-        // Fetch rejects when its signal is aborted, including while offline/hung.
-        return new Promise((_resolve, reject) => {
-          signal!.addEventListener("abort", () =>
-            reject(new DOMException("Aborted", "AbortError")),
-          );
-        });
-      }),
-    );
-    const result = expect(profileCommand(command)).rejects.toMatchObject({ name: "AbortError" });
-    await vi.advanceTimersByTimeAsync(PROFILE_STATE_TIMEOUT_MS - 1);
-    expect(signal?.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await result;
-    expect(signal?.aborted).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
-  },
-);
+it.each(["get_profile_state", "lock_profile"])("bounds a hanging %s request", async (command) => {
+  vi.useFakeTimers();
+  let signal: AbortSignal | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((_url, options: RequestInit) => {
+      signal = options.signal!;
+      // Fetch rejects when its signal is aborted, including while offline/hung.
+      return new Promise((_resolve, reject) => {
+        signal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+    }),
+  );
+  const result = expect(profileCommand(command)).rejects.toMatchObject({ name: "AbortError" });
+  await vi.advanceTimersByTimeAsync(PROFILE_STATE_TIMEOUT_MS - 1);
+  expect(signal?.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  await result;
+  expect(signal?.aborted).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
 
 it("keeps the deadline until the response body finishes", async () => {
   vi.useFakeTimers();

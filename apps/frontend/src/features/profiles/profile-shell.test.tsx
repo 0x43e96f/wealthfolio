@@ -1014,7 +1014,7 @@ it("re-reads a cross-tab unlock received during an in-flight locked-state read",
   expect(screen.getByText("Private portfolio")).toBeInTheDocument();
 });
 
-it.each(["online", "offline", "wealthfolio:event-stream-error"])(
+it.each(["online", "wealthfolio:event-stream-error"])(
   "re-reads web profile state on %s",
   async (event) => {
     vi.useFakeTimers();
@@ -1036,7 +1036,7 @@ it.each([true, false])(
     mount();
     await screen.findByText("Private portfolio");
     mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
-    await act(async () => window.dispatchEvent(new Event("offline")));
+    await act(async () => window.dispatchEvent(new Event("wealthfolio:event-stream-error")));
     expect(screen.getByText("Private portfolio")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
     expect(mocks.command).not.toHaveBeenCalledWith("lock_profile", expect.anything());
@@ -1054,7 +1054,7 @@ it("keeps an expired profile closed after reconnect without issuing another lock
   mount();
   await screen.findByText("Private portfolio");
   mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
-  await act(async () => window.dispatchEvent(new Event("offline")));
+  await act(async () => window.dispatchEvent(new Event("wealthfolio:event-stream-error")));
   mocks.command.mockResolvedValue({ ...protectedState, session: null });
   await act(async () => window.dispatchEvent(new Event("online")));
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
@@ -1288,7 +1288,7 @@ it.each([true, false])(
   },
 );
 
-it("rechecks a failed activity update and resumes without revoking a valid grant", async () => {
+it("leaves failed activity updates alone without another state request or revoking a grant", async () => {
   const activity = (await activityListener(true))!;
   mocks.command.mockImplementation((command) =>
     command === "profile_activity"
@@ -1299,7 +1299,7 @@ it("rechecks a failed activity update and resumes without revoking a valid grant
   expect(screen.getByText("Private portfolio")).toBeInTheDocument();
   expect(
     mocks.command.mock.calls.filter(([command]) => command === "get_profile_state"),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   expect(mocks.command).not.toHaveBeenCalledWith("lock_profile", expect.anything());
   expect(mocks.reload).not.toHaveBeenCalled();
 });
@@ -1399,7 +1399,7 @@ it.each([false, true])(
     fireEvent.change(input, { target: { value: "unfinished password" } });
     const callsBeforeOutage = mocks.command.mock.calls.length;
     mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
-    await act(async () => window.dispatchEvent(new Event("offline")));
+    await act(async () => window.dispatchEvent(new Event("wealthfolio:event-stream-error")));
     expect(screen.getByLabelText("Password")).toBe(input);
     expect(input).toHaveValue("unfinished password");
     expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
@@ -1421,3 +1421,20 @@ it.each([false, true])(
     );
   },
 );
+
+it("does not send state requests when going offline or receiving an offline stream error", async () => {
+  mount();
+  await screen.findByText("Private portfolio");
+  const before = profileStateReads();
+  vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+  try {
+    await act(async () => {
+      window.dispatchEvent(new Event("offline"));
+      window.dispatchEvent(new Event("wealthfolio:event-stream-error"));
+    });
+    expect(profileStateReads()).toBe(before);
+    expect(screen.getByText("Private portfolio")).toBeInTheDocument();
+  } finally {
+    vi.restoreAllMocks();
+  }
+});

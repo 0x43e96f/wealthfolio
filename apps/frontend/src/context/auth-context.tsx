@@ -2,7 +2,7 @@ import { revokeProfileSession, hasProfileSession } from "@/features/profiles/ses
 import { isWeb } from "@/adapters";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { reloadApplication } from "@/lib/reload-application";
-import { classifyAuthResponse, setUnauthorizedHandler, type AuthFailure } from "@/lib/auth-token";
+import { setUnauthorizedHandler, type AuthFailure } from "@/lib/auth-token";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
@@ -23,7 +23,7 @@ interface AuthContextValue {
   oidcEnabled: boolean;
   isAuthenticated: boolean;
   statusLoading: boolean;
-  statusError: "connection" | "signIn" | null;
+  statusError: boolean;
   loginLoading: boolean;
   loginError: string | null;
   login: (password: string) => Promise<void>;
@@ -84,7 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [oidcEnabled, setOidcEnabled] = useState(false);
   const [statusLoading, setStatusLoading] = useState(isWeb);
-  const [statusError, setStatusError] = useState<AuthContextValue["statusError"]>(null);
+  const [statusError, setStatusError] = useState(false);
   const [cookieSession, setCookieSession] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -100,20 +100,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     let cancelled = false;
-    const controller = new AbortController();
     const loadStatus = async () => {
       try {
         const response = await fetch("/api/v1/auth/status", {
           credentials: "same-origin",
-          signal: controller.signal,
         });
         if (cancelled) return;
-        const statusFailure = classifyAuthResponse(response);
-        if (statusFailure) {
-          if (statusFailure === "expired") invalidateSession();
-          setStatusError("signIn");
-          return;
-        }
+        if (response.status === 401) invalidateSession();
         if (!response.ok) throw new Error("Authentication status check failed");
         const data: unknown = await response.json();
         if (
@@ -133,17 +126,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (data.requiresPassword || data.oidcEnabled) {
           const meRes = await fetch("/api/v1/auth/me", {
             credentials: "same-origin",
-            signal: controller.signal,
           });
           if (cancelled) return;
-          const sessionFailure = classifyAuthResponse(meRes);
-          if (sessionFailure === "expired") {
+          if (meRes.status === 401) {
             invalidateSession();
             setCookieSession(false);
-            return;
-          }
-          if (sessionFailure === "signIn") {
-            setStatusError("signIn");
             return;
           }
           if (!meRes.ok) throw new Error("Authentication session check failed");
@@ -162,7 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch {
-        if (!cancelled) setStatusError("connection");
+        if (!cancelled) setStatusError(true);
       } finally {
         if (!cancelled) setStatusLoading(false);
       }
@@ -171,7 +158,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void loadStatus();
     return () => {
       cancelled = true;
-      controller.abort();
     };
   }, [invalidateSession]);
 
@@ -181,7 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const hadSession = cookieSessionRef.current;
       setCookieSession(false);
       if (reason === "signIn" || (!requiresPassword && !oidcEnabled)) {
-        setStatusError("signIn");
+        setStatusError(true);
       }
       if (hadSession && reason === "expired") {
         setLoginError(t("auth:context.sessionExpired"));
@@ -329,15 +315,9 @@ export function AuthGate({ children, fallback }: { children: ReactNode; fallback
     return (
       <div className="bg-background flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
         <p role="alert" className="text-muted-foreground">
-          {t(
-            statusError === "signIn"
-              ? "auth:context.signInRequired"
-              : "auth:context.connectionError",
-          )}
+          {t("common:profiles.errors.generic")}
         </p>
-        <Button onClick={() => reloadApplication()}>
-          {t(statusError === "signIn" ? "auth:context.reloadToSignIn" : "auth:context.retry")}
-        </Button>
+        <Button onClick={() => reloadApplication()}>{t("common:retry")}</Button>
       </div>
     );
   }

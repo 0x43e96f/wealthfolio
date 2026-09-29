@@ -38,7 +38,7 @@ it("preserves authority through an outage but revokes it when a remounted shell 
   await screen.findByText("Private portfolio");
   fireEvent.change(screen.getByLabelText("Unsubmitted edit"), { target: { value: "draft" } });
   mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
-  await act(async () => window.dispatchEvent(new Event("offline")));
+  await act(async () => window.dispatchEvent(new Event("wealthfolio:event-stream-error")));
   expect(screen.getByText("Private portfolio")).toBeInTheDocument();
   expect(profileScope()).toBe("original-grant");
   mocks.command.mockResolvedValue(active);

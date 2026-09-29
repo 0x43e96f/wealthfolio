@@ -43,7 +43,7 @@ it.each(["network", "server", "invalid JSON"])(
     else if (failure === "server") fetchMock.mockResolvedValue(new Response(null, { status: 503 }));
     else fetchMock.mockResolvedValue(Response.json({}));
     mount();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
     expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
     expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -66,7 +66,7 @@ it("keeps a session check server failure recoverable without routing to login", 
     .mockResolvedValueOnce(status())
     .mockResolvedValueOnce(new Response(null, { status: 500 }));
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
   expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(reloadApplication).toHaveBeenCalledOnce();
@@ -83,9 +83,9 @@ it.each(["status", "me"])(
       }),
     );
     mount();
-    expect(await screen.findByRole("button", { name: "Reload to sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Reload to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(reloadApplication).toHaveBeenCalledOnce();
   },
 );
@@ -96,7 +96,7 @@ it("requires manual recovery when auth requirements may have changed", async () 
   await screen.findByText("Private portfolio");
   act(() => notifyUnauthorized());
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: "Reload to sign in" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
@@ -153,8 +153,8 @@ it("treats a proxy 524 HTML error as a connection failure", async () => {
     }),
   );
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
-  expect(screen.queryByRole("button", { name: "Reload to sign in" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  expect(revokeProfileSession).not.toHaveBeenCalled();
 });
 
 it("accepts valid authentication JSON after a redirect", async () => {
@@ -173,8 +173,8 @@ it.each([502, 524])("keeps a redirected %s response a connection error", async (
   Object.defineProperty(response, "redirected", { value: true });
   fetchMock.mockResolvedValueOnce(response);
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
-  expect(screen.queryByRole("button", { name: "Reload to sign in" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  expect(revokeProfileSession).not.toHaveBeenCalled();
   expect(revokeProfileSession).not.toHaveBeenCalled();
 });
 
@@ -191,7 +191,7 @@ it("treats a redirected 401 as confirmed expiry", async () => {
 it("does not admit a successful session response with the wrong body", async () => {
   fetchMock.mockResolvedValueOnce(status()).mockResolvedValueOnce(Response.json({}));
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
   expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
 });
 
@@ -238,7 +238,7 @@ it("retains profile authority and cached queries when a proxy requires navigatio
   vi.mocked(hasProfileSession).mockReturnValue(true);
   queries.setQueryData(["accounts"], "synthetic cached value");
   act(() => notifyUnauthorized("signIn"));
-  await screen.findByRole("button", { name: "Reload to sign in" });
+  await screen.findByRole("button", { name: "Retry" });
   expect(revokeProfileSession).not.toHaveBeenCalled();
   expect(queries.getQueryData(["accounts"])).toBe("synthetic cached value");
   expect(fetchMock).toHaveBeenCalledTimes(1);

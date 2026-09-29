@@ -278,24 +278,26 @@ stop server sync workers.
 An already-open profile stays visible when profile-state verification fails,
 including after a ten-second request timeout. The shell retains the session
 identity and rechecks on reconnect, stream errors, visibility changes, or
-explicit Retry during startup. A confirmed expired or revoked grant closes the
-view; a connection error alone does not. Cached content can remain visible while
-disconnected after a server-side expiry, until verification succeeds. A failed
-check never requests a backend lock. Explicit lock and switch requests still
-revoke locally immediately and have a ten-second deadline so Retry remains
-available when the server is unreachable.
+explicit Retry during startup. Going offline does not trigger a state read, and
+stream errors are reconciled only while the browser reports online. A confirmed
+expired or revoked grant closes the view; a connection error alone does not.
+Cached content can remain visible while disconnected after a server-side expiry,
+until verification succeeds. A failed check never requests a backend lock.
+Explicit lock and switch requests still revoke locally immediately and have a
+ten-second deadline so Retry remains available when the server is unreachable.
 
 User interaction updates the backend idle deadline at most once every thirty
 seconds for password-protected profiles, on both web and Tauri. Unprotected
 profiles send no activity updates. Background requests do not count as activity.
-Transport errors do not revoke the local grant; failed activity updates trigger
-state reconciliation, while explicit locked/stale responses revoke it. Backend
-expiry remains authoritative and late activity cannot revive an expired grant.
+Transport errors do not revoke the local grant or trigger additional state
+reads; explicit locked/stale responses revoke it. Backend expiry remains
+authoritative and late activity cannot revive an expired grant.
 
 Instance authentication is checked at startup and keeps financial content hidden
 when authentication cannot be verified. Explicit Retry reloads the page.
 Confirmed authentication rejection returns to sign-in without starting another
-check; external proxy sign-in pages offer full-page recovery.
+check. Startup verification failures and proxy sign-in pages offer the same
+manual reload recovery.
 
 Middleware validates the browser owner and `x-wf-profile-scope`, then injects
 the fixed runtime into request extensions. SSE uses the cookie plus a non-secret
