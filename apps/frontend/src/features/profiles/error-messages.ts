@@ -14,6 +14,10 @@ export function profileErrorMessage(error: unknown, t: TFunction<"common">): str
         ? t("profiles.errors.cooldown", { count: Number(seconds) })
         : t("profiles.errors.cooldownUnknown");
     }
+    case "PROFILE_CONNECTION_FAILED":
+      return t("profiles.errors.connectionFailed");
+    case "PROFILE_AUTH_REQUIRED":
+      return t("profiles.errors.authRequired");
     case "PROFILE_ORIGIN_REJECTED":
       return t("profiles.errors.originRejected");
     case "PROFILE_LOCKED":

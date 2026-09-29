@@ -15,6 +15,7 @@ import { PasswordInput } from "@wealthfolio/ui/components/ui/password-input";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import {
   profileCommand,
+  isProfileSessionRejection,
   profileChangesChannel,
   type ProfileState,
   type ProfileSummary,
@@ -32,6 +33,7 @@ import {
 } from "./session";
 
 const PROFILE_SELECTION_MS = 180;
+const PROFILE_ACTIVITY_INTERVAL_MS = 30_000;
 const MIN_PASSWORD_LENGTH = 4;
 const MAX_PASSWORD_LENGTH = 128;
 const PASSWORD_LENGTH_ERROR = "PROFILE_PASSWORD_LENGTH";
@@ -54,6 +56,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   const epoch = useRef(0);
   const working = useRef(false);
   const currentProfile = useRef<ProfileSummary | undefined>(undefined);
+  const hasAdmittedSession = useRef(false);
   const refreshRef = useRef<(() => void) | undefined>(undefined);
   const needsClose = useRef(false);
   const [closeFailed, setCloseFailed] = useState(false);
@@ -80,6 +83,9 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   const [copiedRecovery, setCopiedRecovery] = useState<string>();
   const [covered, setCovered] = useState(false);
   const sessionScope = state?.session?.scopeId;
+  const profileProtected = state?.profiles.find(
+    (profile) => profile.id === state.session?.profileId,
+  )?.lockEnabled;
   const [authPending, setAuthPending] = useState(isNativeAuthPending);
   const lock = useCallback(
     async (preserveAuth = false, nextIntent: "lock" | "switch" = "lock") => {
@@ -100,6 +106,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       try {
         await profileCommand("lock_profile", { preserveAuth });
         needsClose.current = false;
+        hasAdmittedSession.current = false;
         setState((old) => (old ? { ...old, session: null } : old));
         setMode("choose");
         setPhase("locked");
@@ -142,6 +149,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       try {
         const next = await profileCommand<ProfileState>("get_profile_state");
         if (cancelled || requestEpoch !== epoch.current || working.current) return;
+        setError("");
         const previous = currentProfile.current;
         if (previous && !next.profiles.some((profile) => profile.id === previous.id)) {
           intent.current = "switch";
@@ -167,6 +175,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
           setError("");
           if (isWeb) void listenPortfolioUpdateStart(keepEventStreamOpen).catch(() => undefined);
           currentProfile.current = profile;
+          hasAdmittedSession.current = true;
           setState(next);
           setCovered(false);
           setPhase("active");
@@ -177,7 +186,11 @@ export function ProfileShell({ children }: { children: ReactNode }) {
         } else {
           // Join native teardown before offering another activation. A replacement
           // recovery grant above must reload without being revoked again.
-          if (needsClose.current || phaseRef.current === "active") {
+          if (
+            needsClose.current ||
+            phaseRef.current === "active" ||
+            (isWeb && hasAdmittedSession.current)
+          ) {
             needsClose.current = false;
             setState(next);
             if (!isWeb) {
@@ -186,6 +199,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
             }
             // Web has no teardown to join, and the server already has no session.
             // Locking it again could revoke a session another tab just opened.
+            hasAdmittedSession.current = false;
             revokeProfileSession();
             needsClose.current = false;
             setSelected(currentProfile.current);
@@ -209,8 +223,14 @@ export function ProfileShell({ children }: { children: ReactNode }) {
         }
       } catch (e) {
         if (!cancelled && requestEpoch === epoch.current) {
-          if (isWeb && phaseRef.current === "active") await lock();
-          else setError(String(e));
+          // Losing contact is not a lock request. Preserve the grant so a successful
+          // recheck can resume this document, but hide cached financial content.
+          if (isProfileSessionRejection(e)) revokeProfileSession();
+          setCovered(true);
+          setPhase("loading");
+          setSelected(currentProfile.current);
+          const message = String(e);
+          setError(isWeb && !message.includes("PROFILE_") ? "PROFILE_CONNECTION_FAILED" : message);
         }
       } finally {
         inFlight = false;
@@ -236,6 +256,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       [window, "online", wake],
       [window, "offline", wake],
       [window, "wealthfolio:event-stream-error", wake],
+      [window, "wealthfolio:event-stream-reconnected", wake],
     ] as const;
     if (isWeb)
       for (const [target, name, handler] of webEvents) target.addEventListener(name, handler);
@@ -295,14 +316,23 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   }, [queries, lock, setPhase]);
 
   useEffect(() => {
-    if (!sessionScope || covered) return;
+    if (!sessionScope || covered || !profileProtected) return;
     let last = 0;
+    let inFlight = false;
     const activity = (event: Event) => {
-      if (!event.isTrusted || Date.now() - last < 15000) return;
+      if (!event.isTrusted || inFlight || Date.now() - last < PROFILE_ACTIVITY_INTERVAL_MS) return;
       last = Date.now();
-      void profileCommand("profile_activity", { scopeId: profileScope() }, true).catch(() =>
-        revokeProfileSession(),
-      );
+      inFlight = true;
+      const requestEpoch = epoch.current;
+      void profileCommand("profile_activity", { scopeId: profileScope() }, true)
+        .catch((error: unknown) => {
+          if (requestEpoch !== epoch.current || phaseRef.current !== "active") return;
+          if (isProfileSessionRejection(error)) revokeProfileSession();
+          else refreshRef.current?.();
+        })
+        .finally(() => {
+          inFlight = false;
+        });
     };
     for (const event of ["pointerdown", "keydown", "touchstart", "wheel"])
       window.addEventListener(event, activity, { passive: true });
@@ -310,7 +340,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       for (const event of ["pointerdown", "keydown", "touchstart", "wheel"])
         window.removeEventListener(event, activity);
     };
-  }, [sessionScope, covered, lock]);
+  }, [sessionScope, covered, lock, profileProtected]);
 
   useEffect(() => {
     if (
@@ -587,19 +617,26 @@ export function ProfileShell({ children }: { children: ReactNode }) {
             ? t("profiles.lockFailed", { defaultValue: "Couldn’t finish locking" })
             : phase === "closing"
               ? t("profiles.locking", { defaultValue: "Locking Wealthfolio…" })
-              : undefined
+              : error.includes("PROFILE_CONNECTION_FAILED") ||
+                  error.includes("PROFILE_AUTH_REQUIRED")
+                ? t("profiles.connectionFailed")
+                : undefined
         }
       >
         {error && (
           <Button
             onClick={() => {
               setError("");
-              if (isWeb && error === "PROFILE_SESSION_INTERRUPTED") reloadApplication();
+              if (
+                isWeb &&
+                (error === "PROFILE_SESSION_INTERRUPTED" || error.includes("PROFILE_AUTH_REQUIRED"))
+              )
+                reloadApplication();
               else if (closeFailed) void lock(false, intent.current);
               else refreshRef.current?.();
             }}
           >
-            {t("retry")}
+            {error.includes("PROFILE_AUTH_REQUIRED") ? t("profiles.signInAgain") : t("retry")}
           </Button>
         )}
       </StartupScreen>

@@ -1,8 +1,25 @@
+import { notifyUnauthorized } from "@/lib/auth-token";
 import { isWeb } from "@/adapters";
 import { profileScope } from "./session";
 import type { ProfileSession } from "./session";
 
 export const PROFILE_STATE_TIMEOUT_MS = 10_000;
+
+class ProfileRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/** Only explicit session rejection is authority to revoke; transport failures are not. */
+export function isProfileSessionRejection(error: unknown): boolean {
+  if (error instanceof ProfileRequestError && error.status !== 423) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /^(?:PROFILE_LOCKED|PROFILE_STALE)(?::|$)/.test(message);
+}
 // One channel per JS context prevents commands from notifying their own shell.
 export const profileChangesChannel =
   isWeb && typeof BroadcastChannel !== "undefined"
@@ -45,7 +62,7 @@ export async function profileCommand<T>(
   // State reads must not leave cached financial screens open indefinitely.
   // Bound web locking too, so its existing retry screen remains usable offline.
   const controller =
-    command === "get_profile_state" || command === "lock_profile"
+    command === "get_profile_state" || command === "lock_profile" || command === "profile_activity"
       ? new AbortController()
       : undefined;
   const timeout = controller
@@ -62,7 +79,15 @@ export async function profileCommand<T>(
       body: JSON.stringify(payload),
       signal: controller?.signal,
     });
-    if (!res.ok) throw new Error(await res.text());
+    // An external auth proxy may redirect to an HTML sign-in page, even with HTTP 200.
+    if (res.redirected || (res.ok && res.headers.get("content-type")?.includes("text/html"))) {
+      throw new Error("PROFILE_AUTH_REQUIRED");
+    }
+    if (res.status === 401) {
+      notifyUnauthorized();
+      throw new Error("PROFILE_AUTH_REQUIRED");
+    }
+    if (!res.ok) throw new ProfileRequestError(await res.text(), res.status);
     const result = (await res.json()) as T;
     if (PROFILE_MUTATIONS.has(command)) profileChangesChannel?.postMessage("changed");
     return result;

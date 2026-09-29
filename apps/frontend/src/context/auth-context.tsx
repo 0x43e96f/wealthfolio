@@ -1,5 +1,7 @@
 import { revokeProfileSession } from "@/features/profiles/session";
 import { isWeb } from "@/adapters";
+import { Button } from "@wealthfolio/ui/components/ui/button";
+import { reloadApplication } from "@/lib/reload-application";
 import { setUnauthorizedHandler } from "@/lib/auth-token";
 import {
   createContext,
@@ -20,6 +22,8 @@ interface AuthContextValue {
   oidcEnabled: boolean;
   isAuthenticated: boolean;
   statusLoading: boolean;
+  statusError: "connection" | "signIn" | null;
+  retryStatus: () => void;
   loginLoading: boolean;
   loginError: string | null;
   login: (password: string) => Promise<void>;
@@ -65,6 +69,8 @@ function clearSsoRedirectGuard() {
   }
 }
 
+const AUTH_CHECK_TIMEOUT_MS = 10_000;
+
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -72,6 +78,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [oidcEnabled, setOidcEnabled] = useState(false);
   const [statusLoading, setStatusLoading] = useState(isWeb);
+  const [statusError, setStatusError] = useState<AuthContextValue["statusError"]>(null);
+  const [statusAttempt, setStatusAttempt] = useState(0);
+  const retryStatus = useCallback(() => {
+    setStatusLoading(true);
+    setStatusError(null);
+    setStatusAttempt((attempt) => attempt + 1);
+  }, []);
   const [cookieSession, setCookieSession] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -87,62 +100,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS);
+    let failure: AuthContextValue["statusError"] = "connection";
+    const checkResponse = (response: Response) => {
+      if (
+        response.status === 401 ||
+        response.redirected ||
+        (response.ok && response.headers.get("content-type")?.includes("text/html"))
+      ) {
+        failure = "signIn";
+        throw new Error("Authentication endpoint requires navigation");
+      }
+      if (!response.ok) throw new Error("Authentication check failed");
+    };
     const loadStatus = async () => {
       try {
         const response = await fetch("/api/v1/auth/status", {
           credentials: "same-origin",
+          signal: controller.signal,
         });
-        if (!response.ok) {
-          throw new Error(`Failed to check authentication status: ${response.status}`);
+        checkResponse(response);
+        const data: unknown = await response.json();
+        if (
+          !data ||
+          typeof data !== "object" ||
+          !("requiresPassword" in data) ||
+          typeof data.requiresPassword !== "boolean" ||
+          !("oidcEnabled" in data) ||
+          typeof data.oidcEnabled !== "boolean"
+        ) {
+          throw new Error("Invalid authentication status");
         }
-        const data = (await response.json()) as {
-          requiresPassword: boolean;
-          oidcEnabled: boolean;
-        };
         if (cancelled) return;
-        const needsPassword = Boolean(data?.requiresPassword);
-        const needsOidc = Boolean(data?.oidcEnabled);
-        setRequiresPassword(needsPassword);
-        setOidcEnabled(needsOidc);
-        const needsAuth = needsPassword || needsOidc;
+        setRequiresPassword(data.requiresPassword);
+        setOidcEnabled(data.oidcEnabled);
 
-        // If auth is required, check if we have a valid cookie session
-        if (needsAuth) {
-          try {
-            const meRes = await fetch("/api/v1/auth/me", {
-              credentials: "same-origin",
-            });
-            if (meRes.ok && !cancelled) {
-              clearSsoRedirectGuard();
-              setCookieSession(true);
-            }
-          } catch {
-            // No valid session, user will need to log in
+        if (data.requiresPassword || data.oidcEnabled) {
+          const meRes = await fetch("/api/v1/auth/me", {
+            credentials: "same-origin",
+            signal: controller.signal,
+          });
+          // Only an explicit rejection establishes that sign-in is needed.
+          if (meRes.status === 401 && !meRes.redirected) {
+            if (!cancelled) setCookieSession(false);
+            return;
+          }
+          checkResponse(meRes);
+          const session: unknown = await meRes.json();
+          if (
+            !session ||
+            typeof session !== "object" ||
+            !("authenticated" in session) ||
+            session.authenticated !== true
+          ) {
+            throw new Error("Invalid authentication session");
+          }
+          if (!cancelled) {
+            clearSsoRedirectGuard();
+            setCookieSession(true);
           }
         }
-      } catch (error) {
-        console.error("Failed to load authentication status", error);
-        if (!cancelled) {
-          setRequiresPassword(false);
-          setOidcEnabled(false);
-        }
+      } catch {
+        if (!cancelled) setStatusError(failure);
       } finally {
-        if (!cancelled) {
-          setStatusLoading(false);
-        }
+        window.clearTimeout(timeout);
+        if (!cancelled) setStatusLoading(false);
       }
     };
 
     void loadStatus();
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
     };
-  }, []);
+  }, [statusAttempt]);
 
   useEffect(() => {
     const handler = () => {
       const hadSession = cookieSessionRef.current;
       setCookieSession(false);
+      retryStatus();
       if (hadSession) {
         setLoginError(t("auth:context.sessionExpired"));
       }
@@ -151,7 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, [t]);
+  }, [retryStatus, t]);
 
   // Surface OIDC callback errors passed back as `?oidc_error=<code>`.
   useEffect(() => {
@@ -238,8 +277,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       requiresAuth,
       requiresPassword,
       oidcEnabled,
-      isAuthenticated: !requiresAuth || cookieSession,
+      isAuthenticated: !statusLoading && !statusError && (!requiresAuth || cookieSession),
       statusLoading,
+      statusError,
+      retryStatus,
       loginLoading,
       loginError,
       login,
@@ -252,6 +293,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       oidcEnabled,
       cookieSession,
       statusLoading,
+      statusError,
+      retryStatus,
       loginLoading,
       loginError,
       login,
@@ -273,12 +316,32 @@ export const useAuth = () => {
 
 export function AuthGate({ children, fallback }: { children: ReactNode; fallback: ReactNode }) {
   const { t } = useTranslation();
-  const { requiresAuth, isAuthenticated, statusLoading } = useAuth();
+  const { requiresAuth, isAuthenticated, statusLoading, statusError, retryStatus } = useAuth();
 
   if (statusLoading) {
     return (
       <div className="bg-background text-muted-foreground flex min-h-screen items-center justify-center">
         {t("auth:context.checkingAuthentication")}
+      </div>
+    );
+  }
+
+  if (statusError) {
+    return (
+      <div className="bg-background flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+        <p role="alert" className="text-muted-foreground">
+          {t(
+            statusError === "signIn"
+              ? "auth:context.signInRequired"
+              : "auth:context.connectionError",
+          )}
+        </p>
+        <Button onClick={retryStatus}>{t("auth:context.retry")}</Button>
+        {statusError === "signIn" && (
+          <Button variant="outline" onClick={() => reloadApplication()}>
+            {t("auth:context.reloadToSignIn")}
+          </Button>
+        )}
       </div>
     );
   }

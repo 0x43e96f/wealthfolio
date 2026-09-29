@@ -1,0 +1,69 @@
+import { act, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { expect, it, vi } from "vitest";
+import { ProfileShell } from "./profile-shell";
+import { matchesProfileScope, profileFetch, profileScope } from "./session";
+
+const mocks = vi.hoisted(() => ({ command: vi.fn(), reload: vi.fn() }));
+vi.mock("@/adapters", () => ({
+  isWeb: true,
+  listenPortfolioUpdateStart: async () => () => {},
+}));
+vi.mock("./api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./api")>()),
+  profileCommand: mocks.command,
+  profileChangesChannel: new EventTarget(),
+}));
+vi.mock("./auth-bridge", () => ({ isNativeAuthPending: () => false }));
+vi.mock("@/lib/reload-application", () => ({ reloadApplication: mocks.reload }));
+
+it("preserves real request authority through an outage but revokes it when reconnect confirms expiry", async () => {
+  const active = {
+    profiles: [{ id: "a", name: "Personal", avatarId: "clay-pebble-animated", lockEnabled: true }],
+    session: { profileId: "a", scopeId: "original-grant" },
+    starting: false,
+  };
+  mocks.command.mockResolvedValue(active);
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ProfileShell>
+        <div>Private portfolio</div>
+      </ProfileShell>
+    </QueryClientProvider>,
+  );
+  await screen.findByText("Private portfolio");
+  mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
+  await act(async () => window.dispatchEvent(new Event("offline")));
+  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(profileScope()).toBe("original-grant");
+  mocks.command.mockResolvedValue(active);
+  await act(async () => window.dispatchEvent(new Event("online")));
+  expect(screen.getByText("Private portfolio")).toBeInTheDocument();
+  expect(mocks.reload).not.toHaveBeenCalled();
+
+  let complete!: (response: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          complete = resolve;
+        }),
+    ),
+  );
+  const pending = profileFetch("/api/v1/accounts");
+  try {
+    mocks.command.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(async () => window.dispatchEvent(new Event("offline")));
+    mocks.command.mockResolvedValue({ ...active, session: null });
+    await act(async () => window.dispatchEvent(new Event("online")));
+    expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+    expect(() => profileScope()).toThrow("PROFILE_LOCKED");
+    expect(matchesProfileScope("original-grant")).toBe(false);
+    complete(new Response("private data"));
+    await expect(pending).rejects.toThrow("PROFILE_LOCKED");
+    expect(mocks.command).not.toHaveBeenCalledWith("lock_profile", expect.anything());
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

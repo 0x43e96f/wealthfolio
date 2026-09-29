@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { profileCommand, PROFILE_STATE_TIMEOUT_MS } from "./api";
+import { profileCommand, PROFILE_STATE_TIMEOUT_MS, isProfileSessionRejection } from "./api";
 
 const broadcast = vi.hoisted(() => {
   const postMessage = vi.fn();
@@ -21,27 +21,32 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each(["get_profile_state", "lock_profile"])("bounds a hanging %s request", async (command) => {
-  vi.useFakeTimers();
-  let signal: AbortSignal | undefined;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((_url, options: RequestInit) => {
-      signal = options.signal!;
-      // Fetch rejects when its signal is aborted, including while offline/hung.
-      return new Promise((_resolve, reject) => {
-        signal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
-      });
-    }),
-  );
-  const result = expect(profileCommand(command)).rejects.toMatchObject({ name: "AbortError" });
-  await vi.advanceTimersByTimeAsync(PROFILE_STATE_TIMEOUT_MS - 1);
-  expect(signal?.aborted).toBe(false);
-  await vi.advanceTimersByTimeAsync(1);
-  await result;
-  expect(signal?.aborted).toBe(true);
-  expect(vi.getTimerCount()).toBe(0);
-});
+it.each(["get_profile_state", "lock_profile", "profile_activity"])(
+  "bounds a hanging %s request",
+  async (command) => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url, options: RequestInit) => {
+        signal = options.signal!;
+        // Fetch rejects when its signal is aborted, including while offline/hung.
+        return new Promise((_resolve, reject) => {
+          signal!.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        });
+      }),
+    );
+    const result = expect(profileCommand(command)).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(PROFILE_STATE_TIMEOUT_MS - 1);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await result;
+    expect(signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
 
 it("keeps the deadline until the response body finishes", async () => {
   vi.useFakeTimers();
@@ -50,6 +55,7 @@ it("keeps the deadline until the response body finishes", async () => {
     vi.fn((_url, options: RequestInit) =>
       Promise.resolve({
         ok: true,
+        headers: new Headers(),
         json: () =>
           new Promise((_resolve, reject) => {
             options.signal!.addEventListener("abort", () =>
@@ -108,4 +114,54 @@ it("does not announce failed mutations", async () => {
   );
   await expect(profileCommand("unlock_profile")).rejects.toThrow("PROFILE_LOCKED");
   expect(broadcast).not.toHaveBeenCalled();
+});
+
+it.each([423, 500, 503])(
+  "only treats a confirmed session rejection as revoked (HTTP %s)",
+  async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("PROFILE_LOCKED", { status })));
+    const error = await profileCommand("profile_activity").catch((error: unknown) => error);
+    expect(isProfileSessionRejection(error)).toBe(status === 423);
+  },
+);
+
+it.each(["PROFILE_LOCKED", "PROFILE_STALE: session changed"])(
+  "recognizes native rejection %s",
+  (error) => {
+    expect(isProfileSessionRejection(error)).toBe(true);
+  },
+);
+
+it.each(["Failed to fetch", "PROFILE_UNAVAILABLE", "PROFILE_ORIGIN_REJECTED"])(
+  "does not revoke for %s",
+  (error) => {
+    expect(isProfileSessionRejection(new Error(error))).toBe(false);
+  },
+);
+
+it("notifies instance authentication on 401 without reporting a profile lock", async () => {
+  const { setUnauthorizedHandler } = await import("@/lib/auth-token");
+  const unauthorized = vi.fn();
+  setUnauthorizedHandler(unauthorized);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unauthorized", { status: 401 })));
+  try {
+    await expect(profileCommand("get_profile_state")).rejects.toThrow("PROFILE_AUTH_REQUIRED");
+    expect(unauthorized).toHaveBeenCalledOnce();
+  } finally {
+    setUnauthorizedHandler(null);
+  }
+});
+
+it("recognizes an auth proxy HTML page but not a Cloudflare error page as sign-in", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(
+      new Response("<html>Sign in</html>", { headers: { "Content-Type": "text/html" } }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  await expect(profileCommand("get_profile_state")).rejects.toThrow("PROFILE_AUTH_REQUIRED");
+  fetch.mockResolvedValue(
+    new Response("<html>Timeout</html>", { status: 524, headers: { "Content-Type": "text/html" } }),
+  );
+  await expect(profileCommand("get_profile_state")).rejects.not.toThrow("PROFILE_AUTH_REQUIRED");
 });
