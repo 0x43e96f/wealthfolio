@@ -13,6 +13,7 @@ mod assets_model;
 mod assets_service;
 mod assets_traits;
 mod auto_classification;
+mod bond_identity;
 mod classification_service;
 
 #[cfg(test)]
@@ -50,12 +51,12 @@ pub use assets_model::{
     QuoteCcyResolutionSource, QuoteMode, Sector, UpdateAssetProfile,
     CONTRACT_MULTIPLIER_METADATA_KEY,
 };
-pub(crate) use assets_service::resolve_bond_aliases;
 pub use assets_service::AssetService;
 pub use assets_traits::{AssetRepositoryTrait, AssetServiceTrait};
 pub use auto_classification::{
     AutoClassificationService, ClassificationInput, ClassificationResult,
 };
+pub(crate) use bond_identity::resolve_bond_aliases;
 pub use classification_service::{
     AssetClassificationService, AssetClassifications, CategoryWithWeight,
 };

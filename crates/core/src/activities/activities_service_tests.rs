@@ -246,7 +246,10 @@ mod tests {
                 .iter()
                 .map(|spec| spec.id.clone().or_else(|| spec.instrument_key()))
                 .collect();
-            crate::assets::resolve_bond_aliases(&mut specs, &assets);
+            let resolutions = crate::assets::resolve_bond_aliases(&specs, &assets);
+            for (spec, resolution) in specs.iter_mut().zip(resolutions) {
+                resolution.apply_to_spec(spec);
+            }
 
             for (spec, input_key) in specs.into_iter().zip(input_keys) {
                 if let Some(ref id) = spec.id {

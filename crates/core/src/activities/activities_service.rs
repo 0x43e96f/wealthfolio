@@ -2519,15 +2519,14 @@ impl ActivityService {
         }
 
         if instrument_type == Some(&InstrumentType::Bond) {
-            let mut specs = [AssetSpec::market_instrument(
+            let specs = [AssetSpec::market_instrument(
                 symbol.to_string(),
                 symbol.to_string(),
                 exchange_mic.map(str::to_string),
                 InstrumentType::Bond,
                 quote_ccy.unwrap_or("USD").to_string(),
             )];
-            resolve_bond_aliases(&mut specs, &assets);
-            if let Some(id) = specs[0].id.clone() {
+            if let Some(id) = resolve_bond_aliases(&specs, &assets)[0].asset_id.clone() {
                 return Some(id);
             }
         }
