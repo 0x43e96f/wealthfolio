@@ -24,7 +24,6 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   statusLoading: boolean;
   statusError: "connection" | "signIn" | null;
-  retryStatus: () => void;
   loginLoading: boolean;
   loginError: string | null;
   login: (password: string) => Promise<void>;
@@ -86,12 +85,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [oidcEnabled, setOidcEnabled] = useState(false);
   const [statusLoading, setStatusLoading] = useState(isWeb);
   const [statusError, setStatusError] = useState<AuthContextValue["statusError"]>(null);
-  const [statusAttempt, setStatusAttempt] = useState(0);
-  const retryStatus = useCallback(() => {
-    setStatusLoading(true);
-    setStatusError(null);
-    setStatusAttempt((attempt) => attempt + 1);
-  }, []);
   const [cookieSession, setCookieSession] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -108,23 +101,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     let cancelled = false;
     const controller = new AbortController();
-    let failure: AuthContextValue["statusError"] = "connection";
-    const checkResponse = (response: Response) => {
-      const authFailure = classifyAuthResponse(response);
-      if (authFailure) {
-        if (!cancelled && authFailure === "expired") invalidateSession();
-        failure = "signIn";
-        throw new Error("Authentication endpoint requires navigation");
-      }
-      if (!response.ok) throw new Error("Authentication check failed");
-    };
     const loadStatus = async () => {
       try {
         const response = await fetch("/api/v1/auth/status", {
           credentials: "same-origin",
           signal: controller.signal,
         });
-        checkResponse(response);
+        if (cancelled) return;
+        const statusFailure = classifyAuthResponse(response);
+        if (statusFailure) {
+          if (statusFailure === "expired") invalidateSession();
+          setStatusError("signIn");
+          return;
+        }
+        if (!response.ok) throw new Error("Authentication status check failed");
         const data: unknown = await response.json();
         if (
           !data ||
@@ -145,15 +135,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             credentials: "same-origin",
             signal: controller.signal,
           });
-          // Only an explicit rejection establishes that sign-in is needed.
-          if (classifyAuthResponse(meRes) === "expired") {
-            if (!cancelled) {
-              invalidateSession();
-              setCookieSession(false);
-            }
+          if (cancelled) return;
+          const sessionFailure = classifyAuthResponse(meRes);
+          if (sessionFailure === "expired") {
+            invalidateSession();
+            setCookieSession(false);
             return;
           }
-          checkResponse(meRes);
+          if (sessionFailure === "signIn") {
+            setStatusError("signIn");
+            return;
+          }
+          if (!meRes.ok) throw new Error("Authentication session check failed");
           const session: unknown = await meRes.json();
           if (
             !session ||
@@ -169,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch {
-        if (!cancelled) setStatusError(failure);
+        if (!cancelled) setStatusError("connection");
       } finally {
         if (!cancelled) setStatusLoading(false);
       }
@@ -180,7 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       controller.abort();
     };
-  }, [statusAttempt, invalidateSession]);
+  }, [invalidateSession]);
 
   useEffect(() => {
     const handler = (reason: AuthFailure) => {
@@ -288,7 +281,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: !statusLoading && !statusError && (!requiresAuth || cookieSession),
       statusLoading,
       statusError,
-      retryStatus,
       loginLoading,
       loginError,
       login,
@@ -302,7 +294,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cookieSession,
       statusLoading,
       statusError,
-      retryStatus,
       loginLoading,
       loginError,
       login,
@@ -324,7 +315,7 @@ export const useAuth = () => {
 
 export function AuthGate({ children, fallback }: { children: ReactNode; fallback: ReactNode }) {
   const { t } = useTranslation();
-  const { requiresAuth, isAuthenticated, statusLoading, statusError, retryStatus } = useAuth();
+  const { requiresAuth, isAuthenticated, statusLoading, statusError } = useAuth();
 
   if (statusLoading) {
     return (
@@ -344,12 +335,9 @@ export function AuthGate({ children, fallback }: { children: ReactNode; fallback
               : "auth:context.connectionError",
           )}
         </p>
-        <Button onClick={retryStatus}>{t("auth:context.retry")}</Button>
-        {statusError === "signIn" && (
-          <Button variant="outline" onClick={() => reloadApplication()}>
-            {t("auth:context.reloadToSignIn")}
-          </Button>
-        )}
+        <Button onClick={() => reloadApplication()}>
+          {t(statusError === "signIn" ? "auth:context.reloadToSignIn" : "auth:context.retry")}
+        </Button>
       </div>
     );
   }

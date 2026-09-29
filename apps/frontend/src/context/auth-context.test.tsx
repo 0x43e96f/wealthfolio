@@ -1,11 +1,13 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { reloadApplication } from "@/lib/reload-application";
 import { notifyUnauthorized } from "@/lib/auth-token";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { revokeProfileSession, hasProfileSession } from "@/features/profiles/session";
 import { LoginPage } from "@/pages/auth/login-page";
 import { AuthGate, AuthProvider } from "./auth-context";
 
+vi.mock("@/lib/reload-application", () => ({ reloadApplication: vi.fn() }));
 vi.mock("@/adapters", () => ({ isWeb: true }));
 vi.mock("@/features/profiles/session", () => ({
   revokeProfileSession: vi.fn(),
@@ -25,6 +27,7 @@ const mount = (queries = new QueryClient(), fallback = <div>Sign in</div>) =>
   );
 beforeEach(() => {
   fetchMock.mockReset();
+  vi.mocked(reloadApplication).mockClear();
   vi.mocked(revokeProfileSession).mockClear();
   vi.mocked(hasProfileSession).mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -43,9 +46,9 @@ it.each(["network", "server", "invalid JSON"])(
     expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
     expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
     expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
-    fetchMock.mockResolvedValue(status(false));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("Private portfolio")).toBeInTheDocument();
+    expect(reloadApplication).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   },
 );
 
@@ -65,11 +68,9 @@ it("keeps a session check server failure recoverable without routing to login", 
   mount();
   expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
   expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
-  fetchMock
-    .mockResolvedValueOnce(status())
-    .mockResolvedValueOnce(Response.json({ authenticated: true }));
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByText("Private portfolio")).toBeInTheDocument();
+  expect(reloadApplication).toHaveBeenCalledOnce();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
 it.each(["status", "me"])(
@@ -84,6 +85,8 @@ it.each(["status", "me"])(
     mount();
     expect(await screen.findByRole("button", { name: "Reload to sign in" })).toBeInTheDocument();
     expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reload to sign in" }));
+    expect(reloadApplication).toHaveBeenCalledOnce();
   },
 );
 
@@ -154,13 +157,35 @@ it("treats a proxy 524 HTML error as a connection failure", async () => {
   expect(screen.queryByRole("button", { name: "Reload to sign in" })).not.toBeInTheDocument();
 });
 
-it("rejects a redirected authentication response even if its body looks valid", async () => {
+it("accepts valid authentication JSON after a redirect", async () => {
   const response = status(false);
   Object.defineProperty(response, "redirected", { value: true });
   fetchMock.mockResolvedValueOnce(response);
   mount();
-  expect(await screen.findByRole("button", { name: "Reload to sign in" })).toBeInTheDocument();
-  expect(screen.queryByText("Private portfolio")).not.toBeInTheDocument();
+  expect(await screen.findByText("Private portfolio")).toBeInTheDocument();
+});
+
+it.each([502, 524])("keeps a redirected %s response a connection error", async (code) => {
+  const response = new Response("<html>Unavailable</html>", {
+    status: code,
+    headers: { "Content-Type": "text/html" },
+  });
+  Object.defineProperty(response, "redirected", { value: true });
+  fetchMock.mockResolvedValueOnce(response);
+  mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Unable to verify your connection");
+  expect(screen.queryByRole("button", { name: "Reload to sign in" })).not.toBeInTheDocument();
+  expect(revokeProfileSession).not.toHaveBeenCalled();
+});
+
+it("treats a redirected 401 as confirmed expiry", async () => {
+  const response = new Response(null, { status: 401 });
+  Object.defineProperty(response, "redirected", { value: true });
+  fetchMock.mockResolvedValueOnce(status()).mockResolvedValueOnce(response);
+  vi.mocked(hasProfileSession).mockReturnValue(true);
+  mount();
+  expect(await screen.findByText("Sign in")).toBeInTheDocument();
+  expect(revokeProfileSession).toHaveBeenCalledOnce();
 });
 
 it("does not admit a successful session response with the wrong body", async () => {
