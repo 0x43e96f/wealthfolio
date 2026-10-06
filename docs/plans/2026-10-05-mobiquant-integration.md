@@ -14,7 +14,7 @@
 - [x] Implement protected same-origin frontend serving and a restricted engine bridge in MobiQuant, with CSRF and no-store enforcement. Backend regression tests pass.
 - [ ] Verify the real engine using disposable observed-holdings, failed-publication and clearing fixtures. Mock-transport regression tests pass; no synthetic production data is permitted.
 - [ ] Build and test frontend only after the owner's explicit repository setup authorization.
-- [ ] Commit and push both repositories; Germany fetches committed sources only.
+- [x] Commit and push integration sources in both repositories. MobiQuant bridge: 62c6d73a; fork implementation: 34e273fe. Germany fetch remains part of the authorized deployment step.
 - [ ] Deploy the engine with a pinned digest, non-root user, encrypted database, no public port, resource limits and no addon/AI/Connect access.
 - [ ] Verify private HTTPS login, empty real accounts, denied anonymous/cross-site access and actual resource use.
 - [ ] Integrate the verified component into the Germany MobiQuant website and preserve the original research/trading journal.
