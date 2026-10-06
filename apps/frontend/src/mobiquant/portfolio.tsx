@@ -38,6 +38,7 @@ const eventNames: Record<string, string> = {
   deposit: "充值",
   withdrawal: "提现",
   account_transfer: "账户划转",
+  convert: "闪兑",
   account_change: "账户变动",
   funding_fee: "资金费",
   settlement: "结算",
