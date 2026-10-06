@@ -28,12 +28,15 @@ const classes: Record<string, string> = {
   eth: "ETH 类",
   stablecoin: "稳定币",
   other: "其他代币",
+  securities: "股票与证券",
+  cash: "现金",
 };
 const providers: Record<string, string> = {
   binance: "Binance",
   okx: "OKX",
   bybit: "Bybit",
   backpack: "Backpack",
+  ibkr: "IBKR 盈透",
   debank: "EVM 钱包",
   solana: "Solana 钱包",
 };
@@ -50,6 +53,8 @@ const eventNames: Record<string, string> = {
   account_transfer: "账户划转",
   convert: "闪兑",
   interest: "利息",
+  dividend: "股息",
+  tax: "预扣税",
   realized_pnl: "已实现盈亏",
   commission: "手续费",
   fee: "手续费",
