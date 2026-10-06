@@ -49,6 +49,9 @@ const issues: Record<string, string> = {
 const notes: Record<string, string> = {
   end_of_day_statement: "数据来自券商日终报表：持仓、现金与估值均为上一交易日收盘。",
   valued_at_last_close: "数量与现金已计入当日成交（约 5–10 分钟延迟）；价格仍为上一交易日收盘价。",
+  positions_end_of_day: "持仓数量与现金为上一交易日收盘；美元股票按最新报价估值。",
+  some_prices_at_last_close: "期权、非美元标的等没有报价的持仓仍按上一收盘价或成交价。",
+  fills_awaiting_statement: "有外币成交暂无汇率，待下一份日终报表计入。",
 };
 const eventNames: Record<string, string> = {
   trade: "成交",
