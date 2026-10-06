@@ -45,6 +45,32 @@ function context(): Context {
       issues: [],
       as_of: "2026-10-05T12:00:00Z",
     },
+    allocation: {
+      holdings_usd: "123.45",
+      by_platform: [{ provider: "binance", accounts: 1, usd: "123.45", share: "1.0000" }],
+      by_asset: [
+        {
+          asset: "btc",
+          symbol: "BTC",
+          class: "btc",
+          quantity: "1",
+          usd: "123.45",
+          share: "1.0000",
+          sources: [
+            {
+              account: "My Binance",
+              provider: "binance",
+              scope: "spot",
+              quantity: "1",
+              usd: "123.45",
+            },
+          ],
+        },
+      ],
+      by_class: [{ class: "btc", usd: "123.45", share: "1.0000" }],
+      unpriced: [],
+      observations: [{ kind: "asset_concentration", subject: "BTC", share: "1.0000" }],
+    },
     recent_events: [],
     reconciliation: {
       observed_change_usd: "23.45",
@@ -101,5 +127,33 @@ describe("private Portfolio", () => {
     await screen.findByRole("alert");
     expect(screen.getByText(label)).toBeInTheDocument();
     expect(screen.getAllByText("$123.45")).toHaveLength(2);
+  });
+
+  it("shows allocation as shares of observed holdings and keeps the history a balance series", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const body = url.endsWith("wealthfolio/status")
+          ? { available: true, accounts: 1 }
+          : url.endsWith("history")
+            ? {
+                points: [
+                  { date: "2026-10-04", net_usd: "100", valued_accounts: 1, complete: true },
+                  { date: "2026-10-05", net_usd: "123.45", valued_accounts: 1, complete: true },
+                ],
+                included_accounts: 1,
+                note: "净资产历史包含充值、提现和行情变化，不代表投资收益。",
+              }
+            : context();
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
+    render(<Portfolio />);
+    expect(await screen.findByRole("img", { name: "净资产历史曲线" })).toBeTruthy();
+    expect(screen.getByText(/不代表投资收益/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "资产分布" }));
+    expect(await screen.findByText(/BTC 占已估值持仓 100.00%/)).toBeTruthy();
+    expect(screen.getByText("Binance · 1 个账户")).toBeTruthy();
+    expect(screen.getAllByText("BTC 类").length).toBeGreaterThan(0);
   });
 });

@@ -42,7 +42,46 @@ export interface Event {
   amount: string;
   fee: string;
 }
+export interface AllocationSource {
+  account: string;
+  provider: string;
+  scope: string;
+  quantity: string;
+  usd: string | null;
+}
+export interface Allocation {
+  holdings_usd: string | null;
+  by_platform: { provider: string; accounts: number; usd: string; share: string | null }[];
+  by_asset: {
+    asset: string;
+    symbol: string;
+    class: string;
+    quantity: string;
+    usd: string;
+    share: string | null;
+    sources: AllocationSource[];
+  }[];
+  by_class: { class: string; usd: string; share: string | null }[];
+  unpriced: (AllocationSource & { symbol: string })[];
+  observations: { kind: string; subject?: string; share?: string; count?: number }[];
+}
+export interface Exposure {
+  long_usd: string;
+  short_usd: string;
+  net_usd: string;
+  gross_usd: string;
+  gross_to_net_assets: string | null;
+  unvalued_positions: number;
+  by_instrument: { instrument: string; long_usd: string; short_usd: string; net_usd: string }[];
+}
+export interface History {
+  points: { date: string; net_usd: string; valued_accounts: number; complete: boolean }[];
+  included_accounts: number;
+  note: string;
+}
 export interface Context {
+  allocation?: Allocation;
+  exposure?: Exposure;
   overview: {
     known_net_usd: string | null;
     included_accounts: number;
@@ -77,6 +116,12 @@ export function usd(value: string | null | undefined): string {
   return `${negative && cents !== 0n ? "-" : ""}$${integer}.${(cents % 100n).toString().padStart(2, "0")}`;
 }
 
+// Shares are ratios, not money, so plain number formatting is acceptable here.
+export function percent(share: string | null | undefined): string {
+  if (share == null || !/^-?\d+(?:\.\d+)?$/.test(share)) return "—";
+  return `${(Number(share) * 100).toFixed(2)}%`;
+}
+
 export function ownedAccounts(context: Context): Account[] {
   return context.overview.accounts.filter(
     (account) => account.included && account.enabled && account.ownership === "owned",
@@ -84,7 +129,7 @@ export function ownedAccounts(context: Context): Account[] {
 }
 
 export async function readAsset<T>(
-  path: "context" | "wealthfolio/status",
+  path: "context" | "wealthfolio/status" | "history",
   signal: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api/assets/${path}`, {

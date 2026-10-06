@@ -2,9 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
 import { RefreshCw, ShieldCheck, Wallet, Eye, EyeOff } from "lucide-react";
-import { ownedAccounts, readAsset, usd, type Context, type LedgerStatus } from "./client";
+import {
+  ownedAccounts,
+  percent,
+  readAsset,
+  usd,
+  type Context,
+  type History,
+  type LedgerStatus,
+} from "./client";
 
-const tabs = ["资产总览", "持仓明细", "衍生品", "交易流水", "每日对账"] as const;
+const tabs = ["资产总览", "资产分布", "持仓明细", "衍生品", "交易流水", "每日对账"] as const;
+const classes: Record<string, string> = {
+  btc: "BTC 类",
+  eth: "ETH 类",
+  stablecoin: "稳定币",
+  other: "其他代币",
+};
 const providers: Record<string, string> = {
   binance: "Binance",
   okx: "OKX",
@@ -31,6 +45,53 @@ function date(value: string | undefined) {
   return value ? new Date(value).toLocaleString("zh-CN") : "尚未同步";
 }
 
+function Bars({ rows }: { rows: { label: string; value: string; share: string | null }[] }) {
+  if (!rows.length) return <p className="text-muted-foreground text-sm">暂无数据。</p>;
+  return (
+    <ul className="space-y-3">
+      {rows.map((row) => (
+        <li key={row.label}>
+          <div className="mb-1 flex justify-between gap-4 text-sm">
+            <span>{row.label}</span>
+            <span className="text-muted-foreground tabular-nums">
+              {row.value} · {percent(row.share)}
+            </span>
+          </div>
+          <div className="bg-muted h-2 overflow-hidden rounded-full">
+            <div
+              className="bg-primary h-full rounded-full"
+              style={{ width: `${Math.min(100, Math.max(0, Number(row.share ?? 0) * 100))}%` }}
+            />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+// Geometry only: the labels beside the line are formatted from the exact strings.
+function Trend({ points }: { points: History["points"] }) {
+  const values = points.map((point) => Number(point.net_usd));
+  const low = Math.min(...values);
+  const span = Math.max(...values) - low || 1;
+  const step = points.length > 1 ? 600 / (points.length - 1) : 0;
+  const line = values
+    .map(
+      (value, index) =>
+        `${(index * step).toFixed(1)},${(110 - ((value - low) / span) * 100).toFixed(1)}`,
+    )
+    .join(" ");
+  return (
+    <svg viewBox="0 0 600 120" className="h-32 w-full" role="img" aria-label="净资产历史曲线">
+      <polyline
+        points={line}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
 function Rows({ headers, rows }: { headers: string[]; rows: (string | null | undefined)[][] }) {
   if (!rows.length)
     return (
@@ -67,6 +128,7 @@ function Rows({ headers, rows }: { headers: string[]; rows: (string | null | und
 export function Portfolio() {
   const [context, setContext] = useState<Context | null>(null);
   const [ledger, setLedger] = useState<LedgerStatus>({ available: false });
+  const [history, setHistory] = useState<History | null>(null);
   const [tab, setTab] = useState<(typeof tabs)[number]>("资产总览");
   const [hidden, setHidden] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -83,17 +145,19 @@ export function Portfolio() {
     setBusy(true);
     setError("");
     try {
-      const [data, status] = await Promise.all([
+      const [data, status, past] = await Promise.all([
         readAsset<Context>("context", current.signal),
         readAsset<LedgerStatus>("wealthfolio/status", current.signal).catch(() => ({
           available: false,
         })),
+        readAsset<History>("history", current.signal).catch(() => null),
       ]);
       if (current.signal.aborted) return;
       if (!Array.isArray(data.overview?.accounts) || !Array.isArray(data.recent_events))
         throw new Error("Invalid asset context");
       setContext(data);
       setLedger(status);
+      if (past && Array.isArray(past.points)) setHistory(past);
     } catch {
       if (controller.current === current)
         setError("刷新失败。保留上次显示的数据，请检查同步状态并稍后重试。");
@@ -118,6 +182,15 @@ export function Portfolio() {
       account: account.label,
     })),
   );
+  const allocation = context?.allocation;
+  const exposure = context?.exposure;
+  const trend = history?.points ?? [];
+  const observation = (item: NonNullable<typeof allocation>["observations"][number]) =>
+    item.kind === "platform_concentration"
+      ? `${providers[item.subject ?? ""] ?? item.subject} 占已知净资产 ${percent(item.share)}，单一平台占比过半。`
+      : item.kind === "asset_concentration"
+        ? `${item.subject} 占已估值持仓 ${percent(item.share)}，单一非稳定币资产占比过半。`
+        : `有 ${item.count} 项持仓缺少报价，未计入分布。`;
   const name = (id: string) =>
     context?.overview.accounts.find((account) => account.id === id)?.label ?? "未知账户";
 
@@ -223,6 +296,73 @@ export function Portfolio() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {tab === "资产总览" && trend.length > 1 && (
+              <div className="mb-6">
+                <div className="text-muted-foreground mb-2 flex justify-between text-xs">
+                  <span>
+                    {trend[0].date} · {money(trend[0].net_usd)}
+                  </span>
+                  <span>
+                    {trend[trend.length - 1].date} · {money(trend[trend.length - 1].net_usd)}
+                  </span>
+                </div>
+                {!hidden && <Trend points={trend} />}
+                <p className="text-muted-foreground mt-2 text-xs">
+                  {history?.note}
+                  {trend.some((point) => !point.complete) && " 部分日期尚有账户未同步，数值偏低。"}
+                </p>
+              </div>
+            )}
+            {tab === "资产分布" && (
+              <div className="space-y-8">
+                {(allocation?.observations ?? []).length > 0 && (
+                  <ul className="border-border space-y-1 rounded-lg border p-3 text-sm">
+                    {allocation?.observations.map((item) => (
+                      <li key={item.kind}>{observation(item)}</li>
+                    ))}
+                  </ul>
+                )}
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">按平台 · 已知净资产</h3>
+                  <Bars
+                    rows={(allocation?.by_platform ?? []).map((row) => ({
+                      label: `${providers[row.provider] ?? row.provider} · ${row.accounts} 个账户`,
+                      value: money(row.usd),
+                      share: row.share,
+                    }))}
+                  />
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">按大类 · 已估值持仓</h3>
+                  <Bars
+                    rows={(allocation?.by_class ?? []).map((row) => ({
+                      label: classes[row.class] ?? row.class,
+                      value: money(row.usd),
+                      share: row.share,
+                    }))}
+                  />
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">跨账户合并持仓</h3>
+                  <Rows
+                    headers={["资产", "大类", "合计数量", "估值", "占比", "来源"]}
+                    rows={(allocation?.by_asset ?? []).map((row) => [
+                      row.symbol,
+                      classes[row.class] ?? row.class,
+                      privateText(row.quantity),
+                      money(row.usd),
+                      percent(row.share),
+                      privateText(
+                        [...new Set(row.sources.map((source) => source.account))].join("、"),
+                      ),
+                    ])}
+                  />
+                </section>
+                <p className="text-muted-foreground text-xs">
+                  占比按已有报价的代币持仓计算；协议仓位已包含在钱包净值中，不重复拆分。链上同名代币按各自合约分开统计。
+                </p>
+              </div>
+            )}
             {tab === "资产总览" && (
               <Rows
                 headers={["账户", "平台", "已知净值", "快照时间", "同步与覆盖"]}
@@ -256,6 +396,18 @@ export function Portfolio() {
                 <p className="text-muted-foreground mb-4 text-sm">
                   名义敞口用于观察风险，不再加入净资产。账户净值已包含的未实现盈亏不重复计算。
                 </p>
+                {exposure && positions.length > 0 && (
+                  <p className="mb-4 text-sm">
+                    多头 {money(exposure.long_usd)} · 空头 {money(exposure.short_usd)} · 净敞口{" "}
+                    {money(exposure.net_usd)} · 总名义 {money(exposure.gross_usd)}
+                    {exposure.gross_to_net_assets
+                      ? ` · 总名义为已知净资产的 ${exposure.gross_to_net_assets} 倍`
+                      : ""}
+                    {exposure.unvalued_positions
+                      ? ` · ${exposure.unvalued_positions} 个仓位缺少名义价值`
+                      : ""}
+                  </p>
+                )}
                 <Rows
                   headers={["合约", "账户", "方向", "数量", "名义敞口", "未实现盈亏"]}
                   rows={positions.map((position) => [

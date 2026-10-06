@@ -21,6 +21,8 @@ The bridge follows what the engine actually does, verified against a disposable 
 - A single `POST /snapshots` resolves the assets, stores the observed price as that date's manual quote and saves the holdings. Nothing is written before the engine accepts the snapshot. The observed price is sent in the `averageCost` field because that is the field the engine turns into the manual quote; the ledger's gain for these positions is therefore zero by construction and must not be read as performance.
 - One snapshot per account per UTC date; a later observation on the same date replaces it.
 
+The page also shows allocation by platform, class and asset merged across accounts, concentration observations, a derivatives exposure summary and a daily balance history, all computed by the MobiQuant collector (`/api/assets/context`, `/api/assets/history`). The history includes deposits and withdrawals and is labelled as a balance series.
+
 Observed-holdings mode has no inferred cost basis, deposit history or audited return. The UI displays missing coverage and does not label balance changes as investment profit. Mirroring remains an explicit action; automatic full-history ingestion is not yet enabled.
 
 The collector's existing credentials are encrypted separately, but its original observation database is not covered by the Rust engine's SQLCipher setting. Protect both databases and backups; do not describe the full deployment as encrypted at rest until collector storage protection is verified as well.
