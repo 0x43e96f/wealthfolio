@@ -5,7 +5,8 @@ import shared from "./vite.config";
 const { build, ...common } = shared as UserConfig;
 
 export default mergeConfig(common, {
-  base: "/",
+  // Relative asset URLs, resolved against the <base> the server injects.
+  base: "./",
   publicDir: false,
   build: {
     ...build,

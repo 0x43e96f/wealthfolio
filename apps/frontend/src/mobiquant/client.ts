@@ -132,13 +132,14 @@ export async function readAsset<T>(
   path: "context" | "wealthfolio/status" | "history",
   signal: AbortSignal,
 ): Promise<T> {
-  const response = await fetch(`/api/assets/${path}`, {
+  // Relative on purpose: the page carries a <base> for the path it is mounted under.
+  const response = await fetch(`api/assets/${path}`, {
     credentials: "same-origin",
     cache: "no-store",
     signal,
   });
   if (response.status === 401) {
-    window.location.assign("/login");
+    window.location.assign(new URL("login", document.baseURI).href);
     throw new Error("登录已过期");
   }
   if (!response.ok) throw new Error("数据暂不可用，稍后重试");

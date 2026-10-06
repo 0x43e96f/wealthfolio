@@ -238,7 +238,7 @@ export function Portfolio() {
               {busy ? "刷新中" : "刷新"}
             </Button>
             <Button asChild>
-              <a href="/connections?tab=connections">账户连接</a>
+              <a href="connections?tab=connections">账户连接</a>
             </Button>
           </div>
         </header>
