@@ -59,9 +59,9 @@ describe("private Portfolio", () => {
   it("keeps authoritative balances available when the ledger fails, without including watch wallets or inventing profit", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("wealthfolio/status")) throw new Error("ledger offline");
-        return new Response(JSON.stringify(context()), { status: 200 });
+      vi.fn((url: string) => {
+        if (url.endsWith("wealthfolio/status")) return Promise.reject(new Error("ledger offline"));
+        return Promise.resolve(new Response(JSON.stringify(context()), { status: 200 }));
       }),
     );
     render(<Portfolio />);
@@ -82,11 +82,13 @@ describe("private Portfolio", () => {
     let failed = false;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (failed) throw new Error("network failed");
-        return new Response(
-          JSON.stringify(url.endsWith("wealthfolio/status") ? { available: false } : data),
-          { status: 200 },
+      vi.fn((url: string) => {
+        if (failed) return Promise.reject(new Error("network failed"));
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(url.endsWith("wealthfolio/status") ? { available: false } : data),
+            { status: 200 },
+          ),
         );
       }),
     );

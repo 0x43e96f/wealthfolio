@@ -1,0 +1,9 @@
+[Unit]
+Description=Loopback entry for the private MobiQuant ledger
+
+[Socket]
+ListenStream=127.0.0.1:8793
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

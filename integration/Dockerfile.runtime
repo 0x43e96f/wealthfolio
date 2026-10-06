@@ -1,0 +1,9 @@
+FROM wealthfolio/wealthfolio@sha256:426b35b77edabbdcf0638f93ef04077ec906894accef2a7fd82a21282d292c23 AS engine
+FROM alpine@sha256:260479a1cfaf304c4c20da7f8405d3ce313513dcd534bb743257bdd2fe0f3e2d
+WORKDIR /app
+COPY --from=engine /usr/local/bin/wealthfolio-server /usr/local/bin/wealthfolio-server
+RUN mkdir -p /data /app/dist && chown 1000:1000 /data
+USER 1000:1000
+ENV WF_DB_PATH=/data/wealthfolio.db
+EXPOSE 8088
+CMD ["/usr/local/bin/wealthfolio-server"]

@@ -1,12 +1,13 @@
 services:
   ledger:
-    image: wealthfolio/wealthfolio@sha256:426b35b77edabbdcf0638f93ef04077ec906894accef2a7fd82a21282d292c23
+    image: mobiquant-wealthfolio:3.9.1-mq1
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
     platform: linux/arm64
     container_name: mobiquant-wealthfolio
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8793:8088"
-    user: "1000:1000"
+    user: "${WF_RUNTIME_UID:?required}:${WF_RUNTIME_GID:?required}"
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -32,7 +33,14 @@ services:
       WF_REQUEST_TIMEOUT_MS: "30000"
       RUST_LOG: "warn"
     networks:
-      - ledger-private
+      ledger-private:
+        ipv4_address: 172.31.93.2
+# Docker never publishes ports for a container that is only on an internal network.
+# The fixed address is reached from the host by mobiquant-wealthfolio-proxy.socket,
+# which listens on 127.0.0.1:8793; the container itself has no route out.
 networks:
   ledger-private:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.31.93.0/29
