@@ -11,6 +11,7 @@ import {
   EyeOff,
 } from "lucide-react";
 import {
+  amount,
   ownedAccounts,
   percent,
   readAsset,
@@ -29,6 +30,7 @@ const classes: Record<string, string> = {
   stablecoin: "稳定币",
   other: "其他代币",
   securities: "股票与证券",
+  fund: "基金与债券",
   cash: "现金",
 };
 const providers: Record<string, string> = {
@@ -37,6 +39,7 @@ const providers: Record<string, string> = {
   bybit: "Bybit",
   backpack: "Backpack",
   ibkr: "IBKR 盈透",
+  futu: "富途牛牛",
   debank: "EVM 钱包",
   solana: "Solana 钱包",
 };
@@ -51,6 +54,7 @@ const notes: Record<string, string> = {
   valued_at_last_close: "数量与现金已计入当日成交（约 5–10 分钟延迟）；价格仍为上一交易日收盘价。",
   positions_end_of_day: "持仓数量与现金为上一交易日收盘；美元股票按最新报价估值。",
   some_prices_at_last_close: "期权、非美元标的等没有报价的持仓仍按上一收盘价或成交价。",
+  fund_detail_unavailable: "基金与债券只有总额：富途接口不提供明细和币种。",
   fills_awaiting_statement: "有外币成交暂无汇率，待下一份日终报表计入。",
 };
 const eventNames: Record<string, string> = {
@@ -311,11 +315,28 @@ export function Portfolio() {
             .map((item) => " " + notes[item])
             .join("")}
         </p>
+        {(summary?.by_currency?.length ?? 0) > 0 && (
+          <p className="text-sm">
+            按币种：
+            {summary!
+              .by_currency!.map(
+                (row) =>
+                  `${hidden ? "••••" : amount(row.native, row.currency)}` +
+                  (row.currency === "USD" ? "" : `（≈ ${money(row.usd)}）`),
+              )
+              .join(" · ")}
+          </p>
+        )}
         <Rows
-          headers={["持仓", "数量", "估值", "账户范围"]}
+          headers={["持仓", "数量", "原币市值", "折合美元", "账户范围"]}
           rows={lines.map((holding) => [
             holding.symbol,
             privateText(holding.quantity),
+            holding.currency && holding.native_value != null
+              ? hidden
+                ? "••••"
+                : amount(holding.native_value, holding.currency)
+              : "—",
             money(holding.usd_value),
             holding.scope,
           ])}

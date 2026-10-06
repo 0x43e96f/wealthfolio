@@ -5,6 +5,8 @@ export interface Holding {
   usd_value: string | null;
   scope: string;
   kind: string;
+  currency?: string;
+  native_value?: string | null;
 }
 export interface Position {
   instrument: string;
@@ -94,6 +96,7 @@ export interface AccountSummary {
   gross_exposure_usd: string;
   borrowed_usd: string;
   leverage: string | null;
+  by_currency?: { currency: string; native: string; usd: string }[];
 }
 export interface Context {
   groups?: Group[];
@@ -123,6 +126,12 @@ export interface LedgerStatus {
 }
 
 // Format financial strings exactly. JavaScript floats never determine displayed money.
+// An amount in its own currency, to two decimals, without going through a float.
+export function amount(value: string | null | undefined, currency: string): string {
+  const text = usd(value);
+  return text === "—" ? text : text.replace("$", "") + " " + currency;
+}
+
 export function usd(value: string | null | undefined): string {
   if (value == null || !/^-?\d+(?:\.\d+)?$/.test(value) || value.length > 160) return "—";
   const negative = value.startsWith("-");
