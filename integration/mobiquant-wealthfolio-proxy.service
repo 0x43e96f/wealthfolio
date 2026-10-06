@@ -7,7 +7,7 @@ Wants=mobiquant-wealthfolio.service
 [Service]
 # The container sits on an internal Docker network with no published port and no
 # route out; this is the only path to it, and it only accepts loopback clients.
-ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=10min 172.31.93.2:8088
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=10min 192.168.193.2:8088
 DynamicUser=true
 NoNewPrivileges=true
 PrivateTmp=true
