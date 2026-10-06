@@ -87,8 +87,17 @@ export interface Group {
   net_usd: string | null;
   complete: boolean;
 }
+export interface AccountSummary {
+  net_usd: string | null;
+  cash_usd: string;
+  invested_usd: string;
+  gross_exposure_usd: string;
+  borrowed_usd: string;
+  leverage: string | null;
+}
 export interface Context {
   groups?: Group[];
+  account_summaries?: Record<string, AccountSummary>;
   allocation?: Allocation;
   exposure?: Exposure;
   overview: {

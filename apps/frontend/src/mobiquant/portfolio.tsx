@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
 import {
@@ -45,6 +45,10 @@ const issues: Record<string, string> = {
   incomplete_coverage: "资产覆盖不完整",
   duplicate_account: "重复账户已排除",
   account_identity_unverified: "账户身份待核验",
+};
+const notes: Record<string, string> = {
+  end_of_day_statement: "数据来自券商日终报表：持仓、现金与估值均为上一交易日收盘。",
+  valued_at_last_close: "数量与现金已计入当日成交（约 5–10 分钟延迟）；价格仍为上一交易日收盘价。",
 };
 const eventNames: Record<string, string> = {
   trade: "成交",
@@ -155,6 +159,7 @@ export function Portfolio() {
   const [hidden, setHidden] = useState(false);
   const [dust, setDust] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [opened, setOpened] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
@@ -217,7 +222,8 @@ export function Portfolio() {
         : `有 ${item.count} 项持仓缺少报价，未计入分布。`;
   // The owner's rule: anything under ten dollars, or without a market to price it,
   // is noise. It stays in the totals where it has a value and out of the tables.
-  const small = (value: string | null | undefined) => value == null || Number(value) < 10;
+  // By size, not sign: a short position or a margin loan is negative and matters.
+  const small = (value: string | null | undefined) => value == null || Math.abs(Number(value)) < 10;
   const merged = allocation?.by_asset ?? [];
   const smallCount =
     tab === "资产分布"
@@ -268,6 +274,64 @@ export function Portfolio() {
   accounts
     .filter((account) => !grouped.has(account.id))
     .forEach((account) => overviewRows.push({ kind: "account", account, member: false }));
+  const detail = (account: Account) => {
+    const summary = context?.account_summaries?.[account.id];
+    const snapshot = account.snapshot;
+    if (!snapshot) return <p className="text-muted-foreground text-sm">尚无快照。</p>;
+    const lines = [...snapshot.holdings]
+      .filter((holding) => dust || !small(holding.usd_value))
+      .sort((a, b) => Math.abs(Number(b.usd_value ?? 0)) - Math.abs(Number(a.usd_value ?? 0)));
+    const figures: [string, string][] = summary
+      ? [
+          ["净值", money(summary.net_usd)],
+          ["现金与稳定币", money(summary.cash_usd)],
+          ["持仓市值", money(summary.invested_usd)],
+          ["总敞口", money(summary.gross_exposure_usd)],
+          ["杠杆", summary.leverage ? `${summary.leverage}×` : "—"],
+          ["借款", money(summary.borrowed_usd)],
+        ]
+      : [];
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+          {figures.map(([title, value]) => (
+            <div key={title}>
+              <p className="text-muted-foreground text-xs">{title}</p>
+              <p className="font-medium tabular-nums">{value}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-muted-foreground text-xs">
+          杠杆 = 总敞口 ÷ 净值；总敞口为非现金持仓市值的绝对值加衍生品名义价值。
+          {snapshot.missing
+            .filter((item) => notes[item])
+            .map((item) => " " + notes[item])
+            .join("")}
+        </p>
+        <Rows
+          headers={["持仓", "数量", "估值", "账户范围"]}
+          rows={lines.map((holding) => [
+            holding.symbol,
+            privateText(holding.quantity),
+            money(holding.usd_value),
+            holding.scope,
+          ])}
+        />
+        {snapshot.positions.length > 0 && (
+          <Rows
+            headers={["合约", "方向", "数量", "名义敞口", "未实现盈亏"]}
+            rows={snapshot.positions.map((position) => [
+              position.instrument,
+              position.side,
+              privateText(position.quantity),
+              money(position.notional_usd),
+              money(position.unrealized_pnl),
+            ])}
+          />
+        )}
+      </div>
+    );
+  };
   const name = (id: string) =>
     context?.overview.accounts.find((account) => account.id === id)?.label ?? "未知账户";
 
@@ -503,28 +567,56 @@ export function Portfolio() {
                           </td>
                         </tr>
                       ) : (
-                        <tr key={row.account.id} className="border-b last:border-0">
-                          <td
-                            className={
-                              "whitespace-nowrap px-4 py-3" +
-                              (row.member ? " text-muted-foreground pl-10" : "")
+                        <Fragment key={row.account.id}>
+                          <tr
+                            className="hover:bg-muted/40 cursor-pointer border-b last:border-0"
+                            onClick={() =>
+                              setOpened((current) =>
+                                current === row.account.id ? null : row.account.id,
+                              )
                             }
                           >
-                            {privateText(row.account.label)}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3">
-                            {providers[row.account.provider] ?? row.account.provider}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 tabular-nums">
-                            {money(row.account.snapshot?.net_usd)}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3">
-                            {date(row.account.snapshot?.source_time)}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3">
-                            {accountStatus(row.account)}
-                          </td>
-                        </tr>
+                            <td
+                              className={
+                                "whitespace-nowrap px-4 py-3" +
+                                (row.member ? " text-muted-foreground pl-10" : "")
+                              }
+                            >
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1"
+                                aria-expanded={opened === row.account.id}
+                                aria-label={`${row.account.label} 明细`}
+                              >
+                                {opened === row.account.id ? (
+                                  <ChevronDown className="size-4" />
+                                ) : (
+                                  <ChevronRight className="size-4" />
+                                )}
+                                {privateText(row.account.label)}
+                              </button>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              {providers[row.account.provider] ?? row.account.provider}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 tabular-nums">
+                              {money(row.account.snapshot?.net_usd)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              {date(row.account.snapshot?.source_time)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              {accountStatus(row.account)}
+                            </td>
+                          </tr>
+                          {opened === row.account.id && (
+                            <tr className="bg-muted/20 border-b">
+                              <td colSpan={5} className="px-4 py-4">
+                                {detail(row.account)}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       ),
                     )}
                   </tbody>

@@ -190,4 +190,60 @@ describe("private Portfolio", () => {
     expect(await screen.findByText("OKX sub")).toBeTruthy();
     expect(screen.getByText("OKX main")).toBeTruthy();
   });
+
+  it("opens an account to its positions, cash and leverage", async () => {
+    const data = context();
+    const account = data.overview.accounts[0];
+    account.label = "IBKR";
+    account.provider = "ibkr";
+    account.snapshot!.missing = ["valued_at_last_close"];
+    account.snapshot!.holdings = [
+      {
+        asset: "ibkr:stk:1",
+        symbol: "AAPL",
+        quantity: "10",
+        usd_value: "180",
+        scope: "stk",
+        kind: "token",
+      },
+      {
+        asset: "ibkr:cash",
+        symbol: "USD",
+        quantity: "-56.55",
+        usd_value: "-56.55",
+        scope: "cash",
+        kind: "token",
+      },
+    ];
+    data.account_summaries = {
+      owned: {
+        net_usd: "123.45",
+        cash_usd: "-56.55",
+        invested_usd: "180",
+        gross_exposure_usd: "180",
+        borrowed_usd: "56.55",
+        leverage: "1.46",
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(url.endsWith("wealthfolio/status") ? { available: false } : data),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "IBKR 明细" }));
+    expect(await screen.findByText("1.46×")).toBeTruthy();
+    expect(screen.getByText("AAPL")).toBeTruthy();
+    expect(screen.getByText("$56.55")).toBeTruthy();
+    expect(screen.getAllByText("-$56.55").length).toBe(2);
+    expect(screen.getByText(/价格仍为上一交易日收盘价/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "IBKR 明细" }));
+    await waitFor(() => expect(screen.queryByText("1.46×")).toBeNull());
+  });
 });
