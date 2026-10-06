@@ -210,8 +210,9 @@ export function Portfolio() {
       : item.kind === "asset_concentration"
         ? `${item.subject} 占已估值持仓 ${percent(item.share)}，单一非稳定币资产占比过半。`
         : `有 ${item.count} 项持仓缺少报价，未计入分布。`;
-  // A display threshold only; wallets often hold hundreds of sub-dollar leftovers.
-  const small = (value: string | null | undefined) => value != null && Number(value) < 1;
+  // The owner's rule: anything under ten dollars, or without a market to price it,
+  // is noise. It stays in the totals where it has a value and out of the tables.
+  const small = (value: string | null | undefined) => value == null || Number(value) < 10;
   const merged = allocation?.by_asset ?? [];
   const smallCount =
     tab === "资产分布"
@@ -220,8 +221,8 @@ export function Portfolio() {
   const dustToggle = smallCount > 0 && (
     <p className="text-muted-foreground mt-3 text-xs">
       {dust
-        ? `已显示 ${smallCount} 项低于 $1 的持仓。`
-        : `已隐藏 ${smallCount} 项低于 $1 的持仓，合计仍计入。`}{" "}
+        ? `已显示 ${smallCount} 项低于 $10 或暂无报价的持仓。`
+        : `已隐藏 ${smallCount} 项低于 $10 或暂无报价的持仓。`}{" "}
       <button type="button" className="underline" onClick={() => setDust((value) => !value)}>
         {dust ? "隐藏" : "显示全部"}
       </button>
