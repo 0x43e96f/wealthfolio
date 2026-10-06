@@ -23,8 +23,8 @@ const providers: Record<string, string> = {
   binance: "Binance",
   okx: "OKX",
   bybit: "Bybit",
-  debank: "EVM / DeBank",
-  solana: "Solana",
+  debank: "EVM 钱包",
+  solana: "Solana 钱包",
 };
 const issues: Record<string, string> = {
   missing_or_stale_snapshot: "快照过期或尚未同步",
@@ -131,6 +131,7 @@ export function Portfolio() {
   const [history, setHistory] = useState<History | null>(null);
   const [tab, setTab] = useState<(typeof tabs)[number]>("资产总览");
   const [hidden, setHidden] = useState(false);
+  const [dust, setDust] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
@@ -191,6 +192,23 @@ export function Portfolio() {
       : item.kind === "asset_concentration"
         ? `${item.subject} 占已估值持仓 ${percent(item.share)}，单一非稳定币资产占比过半。`
         : `有 ${item.count} 项持仓缺少报价，未计入分布。`;
+  // A display threshold only; wallets often hold hundreds of sub-dollar leftovers.
+  const small = (value: string | null | undefined) => value != null && Number(value) < 1;
+  const merged = allocation?.by_asset ?? [];
+  const smallCount =
+    tab === "资产分布"
+      ? merged.filter((row) => small(row.usd)).length
+      : holdings.filter((row) => small(row.usd_value)).length;
+  const dustToggle = smallCount > 0 && (
+    <p className="text-muted-foreground mt-3 text-xs">
+      {dust
+        ? `已显示 ${smallCount} 项低于 $1 的持仓。`
+        : `已隐藏 ${smallCount} 项低于 $1 的持仓，合计仍计入。`}{" "}
+      <button type="button" className="underline" onClick={() => setDust((value) => !value)}>
+        {dust ? "隐藏" : "显示全部"}
+      </button>
+    </p>
+  );
   const name = (id: string) =>
     context?.overview.accounts.find((account) => account.id === id)?.label ?? "未知账户";
 
@@ -346,17 +364,20 @@ export function Portfolio() {
                   <h3 className="mb-3 text-sm font-medium">跨账户合并持仓</h3>
                   <Rows
                     headers={["资产", "大类", "合计数量", "估值", "占比", "来源"]}
-                    rows={(allocation?.by_asset ?? []).map((row) => [
-                      row.symbol,
-                      classes[row.class] ?? row.class,
-                      privateText(row.quantity),
-                      money(row.usd),
-                      percent(row.share),
-                      privateText(
-                        [...new Set(row.sources.map((source) => source.account))].join("、"),
-                      ),
-                    ])}
+                    rows={merged
+                      .filter((row) => dust || !small(row.usd))
+                      .map((row) => [
+                        row.symbol,
+                        classes[row.class] ?? row.class,
+                        privateText(row.quantity),
+                        money(row.usd),
+                        percent(row.share),
+                        privateText(
+                          [...new Set(row.sources.map((source) => source.account))].join("、"),
+                        ),
+                      ])}
                   />
+                  {dustToggle}
                 </section>
                 <p className="text-muted-foreground text-xs">
                   占比按已有报价的代币持仓计算；协议仓位已包含在钱包净值中，不重复拆分。链上同名代币按各自合约分开统计。
@@ -380,16 +401,21 @@ export function Portfolio() {
               />
             )}
             {tab === "持仓明细" && (
-              <Rows
-                headers={["资产", "账户", "数量", "估值", "账户范围"]}
-                rows={holdings.map((holding) => [
-                  holding.symbol,
-                  privateText(holding.account),
-                  privateText(holding.quantity),
-                  money(holding.usd_value),
-                  holding.scope,
-                ])}
-              />
+              <>
+                <Rows
+                  headers={["资产", "账户", "数量", "估值", "账户范围"]}
+                  rows={holdings
+                    .filter((holding) => dust || !small(holding.usd_value))
+                    .map((holding) => [
+                      holding.symbol,
+                      privateText(holding.account),
+                      privateText(holding.quantity),
+                      money(holding.usd_value),
+                      holding.scope,
+                    ])}
+                />
+                {dustToggle}
+              </>
             )}
             {tab === "衍生品" && (
               <>
