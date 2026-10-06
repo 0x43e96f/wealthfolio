@@ -1,0 +1,20 @@
+[Unit]
+Description=MobiQuant fixed-version private Wealthfolio ledger
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mobiquant-wealthfolio/integration
+ExecStart=/usr/bin/docker compose --project-name mobiquant-wealthfolio --env-file /etc/mobiquant-wealthfolio.env --file compose.yml up --no-build --no-color
+ExecStop=/usr/bin/docker compose --project-name mobiquant-wealthfolio --env-file /etc/mobiquant-wealthfolio.env --file compose.yml stop
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
