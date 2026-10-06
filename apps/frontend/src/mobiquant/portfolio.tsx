@@ -23,6 +23,7 @@ const providers: Record<string, string> = {
   binance: "Binance",
   okx: "OKX",
   bybit: "Bybit",
+  backpack: "Backpack",
   debank: "EVM 钱包",
   solana: "Solana 钱包",
 };
