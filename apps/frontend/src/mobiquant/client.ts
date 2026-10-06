@@ -7,6 +7,54 @@ export interface Holding {
   kind: string;
   currency?: string;
   native_value?: string | null;
+  cost?: string | null;
+  pnl?: string | null;
+}
+export interface Fill {
+  connection_id: string;
+  account: string;
+  source_id: string;
+  occurred_at: string;
+  asset: string;
+  amount: string;
+  price: string;
+  quote: string;
+  fee: string;
+  pnl: string | null;
+  scope: string;
+}
+export interface TradeSummary {
+  connection_id: string;
+  account: string;
+  instrument: string;
+  scope: string;
+  quote: string;
+  fills: number;
+  first: string;
+  last: string;
+  bought: string;
+  average_buy: string | null;
+  sold: string;
+  average_sell: string | null;
+  net_position: string;
+  average_cost: string | null;
+  fees: string;
+  realized: string;
+  basis: "source" | "computed";
+}
+export interface Trades {
+  fills: Fill[];
+  total: number;
+  summary: TradeSummary[];
+}
+// A price or size as the source gave it, trimmed of trailing zeros, never rounded
+// through a float beyond eight decimals.
+export function plain(value: string | null | undefined): string {
+  if (value == null || !/^-?\d+(?:\.\d+)?$/.test(value)) return "—";
+  const [whole, fraction = ""] = value.split(".");
+  const kept = fraction.slice(0, 8).replace(/0+$/, "");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return kept ? `${grouped}.${kept}` : grouped;
 }
 export interface Position {
   instrument: string;
@@ -156,7 +204,7 @@ export function ownedAccounts(context: Context): Account[] {
 }
 
 export async function readAsset<T>(
-  path: "context" | "wealthfolio/status" | "history",
+  path: "context" | "wealthfolio/status" | "history" | "trades?days=365",
   signal: AbortSignal,
 ): Promise<T> {
   // Relative on purpose: the page carries a <base> for the path it is mounted under.

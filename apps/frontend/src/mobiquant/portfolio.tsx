@@ -21,6 +21,8 @@ import {
   type Group,
   type History,
   type LedgerStatus,
+  plain,
+  type Trades,
 } from "./client";
 
 const tabs = ["资产总览", "资产分布", "持仓明细", "衍生品", "交易流水", "每日对账"] as const;
@@ -167,6 +169,8 @@ export function Portfolio() {
   const [dust, setDust] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [opened, setOpened] = useState<string | null>(null);
+  const [trades, setTrades] = useState<Trades | null>(null);
+  const [flow, setFlow] = useState<"汇总" | "成交" | "资金">("汇总");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
@@ -181,12 +185,13 @@ export function Portfolio() {
     setBusy(true);
     setError("");
     try {
-      const [data, status, past] = await Promise.all([
+      const [data, status, past, deals] = await Promise.all([
         readAsset<Context>("context", current.signal),
         readAsset<LedgerStatus>("wealthfolio/status", current.signal).catch(() => ({
           available: false,
         })),
         readAsset<History>("history", current.signal).catch(() => null),
+        readAsset<Trades>("trades?days=365", current.signal).catch(() => null),
       ]);
       if (current.signal.aborted) return;
       if (!Array.isArray(data.overview?.accounts) || !Array.isArray(data.recent_events))
@@ -194,6 +199,7 @@ export function Portfolio() {
       setContext(data);
       setLedger(status);
       if (past && Array.isArray(past.points)) setHistory(past);
+      if (deals && Array.isArray(deals.fills)) setTrades(deals);
     } catch {
       if (controller.current === current)
         setError("刷新失败。保留上次显示的数据，请检查同步状态并稍后重试。");
@@ -328,10 +334,16 @@ export function Portfolio() {
           </p>
         )}
         <Rows
-          headers={["持仓", "数量", "原币市值", "折合美元", "账户范围"]}
+          headers={["持仓", "数量", "成本价", "浮动盈亏", "原币市值", "折合美元", "账户范围"]}
           rows={lines.map((holding) => [
             holding.symbol,
             privateText(holding.quantity),
+            holding.cost != null ? `${plain(holding.cost)} ${holding.currency ?? ""}` : "—",
+            holding.pnl != null
+              ? hidden
+                ? "••••"
+                : amount(holding.pnl, holding.currency ?? "")
+              : "—",
             holding.currency && holding.native_value != null
               ? hidden
                 ? "••••"
@@ -696,20 +708,99 @@ export function Portfolio() {
             )}
             {tab === "交易流水" && (
               <>
-                <p className="text-muted-foreground mb-4 text-sm">
-                  {context?.reconciliation.activity_window}。币种变动不等于已实现收益。
-                </p>
-                <Rows
-                  headers={["时间", "账户", "类型", "资产", "变动数量", "费用"]}
-                  rows={(context?.recent_events ?? []).map((event) => [
-                    date(event.occurred_at),
-                    privateText(name(event.connection_id)),
-                    eventNames[event.kind] ?? event.kind,
-                    event.asset,
-                    privateText(event.amount),
-                    privateText(event.fee),
-                  ])}
-                />
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {(["汇总", "成交", "资金"] as const).map((item) => (
+                    <Button
+                      key={item}
+                      size="sm"
+                      variant={flow === item ? "default" : "outline"}
+                      onClick={() => setFlow(item)}
+                    >
+                      {item === "汇总" ? "按标的汇总" : item === "成交" ? "成交明细" : "资金流水"}
+                    </Button>
+                  ))}
+                </div>
+                {flow === "汇总" && (
+                  <>
+                    <p className="text-muted-foreground mb-4 text-sm">
+                      近一年内每个账户、每个标的的买卖与已实现盈亏，金额以该标的的计价币种表示。
+                      标“平台”的盈亏是平台自己给出的数字；标“推算”的是按均价成本从这段成交里算的，
+                      若此前已有持仓则不准。
+                    </p>
+                    <Rows
+                      headers={[
+                        "标的",
+                        "账户",
+                        "买入量 / 均价",
+                        "卖出量 / 均价",
+                        "期内净持仓 / 成本",
+                        "已实现盈亏",
+                        "手续费",
+                        "首笔 – 末笔",
+                      ]}
+                      rows={(trades?.summary ?? []).map((row) => [
+                        row.instrument,
+                        privateText(row.account),
+                        `${privateText(plain(row.bought))} @ ${plain(row.average_buy)}`,
+                        `${privateText(plain(row.sold))} @ ${plain(row.average_sell)}`,
+                        `${privateText(plain(row.net_position))} @ ${plain(row.average_cost)}`,
+                        hidden
+                          ? "••••"
+                          : `${amount(row.realized, row.quote)}（${row.basis === "source" ? "平台" : "推算"}）`,
+                        privateText(plain(row.fees)),
+                        `${date(row.first).slice(0, 10)} – ${date(row.last).slice(0, 10)}`,
+                      ])}
+                    />
+                  </>
+                )}
+                {flow === "成交" && (
+                  <>
+                    <p className="text-muted-foreground mb-4 text-sm">
+                      共 {trades?.total ?? 0} 笔成交，显示最近 {trades?.fills.length ?? 0} 笔。
+                      合约的数量单位以平台为准（OKX 为张）。
+                    </p>
+                    <Rows
+                      headers={[
+                        "时间",
+                        "账户",
+                        "标的",
+                        "方向",
+                        "数量",
+                        "成交价",
+                        "手续费",
+                        "平台盈亏",
+                      ]}
+                      rows={(trades?.fills ?? []).map((fill) => [
+                        date(fill.occurred_at),
+                        privateText(fill.account),
+                        fill.asset,
+                        fill.amount.startsWith("-") ? "卖出" : "买入",
+                        privateText(plain(fill.amount.replace("-", ""))),
+                        `${plain(fill.price)} ${fill.quote}`,
+                        privateText(plain(fill.fee)),
+                        fill.pnl == null ? "—" : hidden ? "••••" : amount(fill.pnl, fill.quote),
+                      ])}
+                    />
+                  </>
+                )}
+                {flow === "资金" && (
+                  <>
+                    <p className="text-muted-foreground mb-4 text-sm">
+                      {context?.reconciliation.activity_window}。币种变动不等于已实现收益。
+                    </p>
+                    <Rows
+                      headers={["时间", "账户", "类型", "资产", "变动数量", "费用"]}
+                      rows={(context?.recent_events ?? []).map((event) => [
+                        date(event.occurred_at),
+                        privateText(name(event.connection_id)),
+                        eventNames[event.kind] ?? event.kind,
+                        event.asset,
+                        privateText(event.amount),
+                        privateText(event.fee),
+                      ])}
+                    />
+                  </>
+                )}
               </>
             )}
             {tab === "每日对账" && (

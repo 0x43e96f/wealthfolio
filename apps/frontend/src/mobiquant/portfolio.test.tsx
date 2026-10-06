@@ -246,4 +246,72 @@ describe("private Portfolio", () => {
     fireEvent.click(screen.getByRole("button", { name: "IBKR 明细" }));
     await waitFor(() => expect(screen.queryByText("1.46×")).toBeNull());
   });
+
+  it("shows what was bought and sold per instrument, and whose profit figure it is", async () => {
+    const data = context();
+    const trades = {
+      total: 1,
+      fills: [
+        {
+          connection_id: "owned",
+          account: "My Binance",
+          source_id: "fill:1",
+          occurred_at: "2026-10-05T12:00:00Z",
+          asset: "BTCUSDT",
+          amount: "-0.50000000",
+          price: "60000.10",
+          quote: "USDT",
+          fee: "3",
+          pnl: "125.5",
+          scope: "linear",
+        },
+      ],
+      summary: [
+        {
+          connection_id: "owned",
+          account: "My Binance",
+          instrument: "BTCUSDT",
+          scope: "linear",
+          quote: "USDT",
+          fills: 2,
+          first: "2026-10-01T12:00:00Z",
+          last: "2026-10-05T12:00:00Z",
+          bought: "0.5",
+          average_buy: "59749.1",
+          sold: "0.5",
+          average_sell: "60000.1",
+          net_position: "0",
+          average_cost: null,
+          fees: "6",
+          realized: "125.5",
+          basis: "source",
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.includes("trades")
+                  ? trades
+                  : data,
+            ),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "交易流水" }));
+    expect(await screen.findByText("125.50 USDT（平台）")).toBeTruthy();
+    expect(screen.getByText("0.5 @ 59,749.1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "成交明细" }));
+    expect(await screen.findByText("60,000.1 USDT")).toBeTruthy();
+    expect(screen.getByText("卖出")).toBeTruthy();
+    expect(screen.getByText("125.50 USDT")).toBeTruthy();
+  });
 });
