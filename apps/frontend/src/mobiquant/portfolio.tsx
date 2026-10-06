@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
-import { RefreshCw, ShieldCheck, Wallet, Eye, EyeOff } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+  ShieldCheck,
+  Wallet,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 import {
   ownedAccounts,
   percent,
   readAsset,
   usd,
+  type Account,
   type Context,
+  type Group,
   type History,
   type LedgerStatus,
 } from "./client";
@@ -139,6 +149,7 @@ export function Portfolio() {
   const [tab, setTab] = useState<(typeof tabs)[number]>("资产总览");
   const [hidden, setHidden] = useState(false);
   const [dust, setDust] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
@@ -216,6 +227,41 @@ export function Portfolio() {
       </button>
     </p>
   );
+  const accountStatus = (account: Account) =>
+    account.stale
+      ? "快照过期或尚未同步"
+      : account.snapshot?.balances_complete
+        ? "余额已同步"
+        : "覆盖不完整";
+  // Accounts the owner filed under one name show as a single row that opens up.
+  type OverviewRow =
+    | { kind: "group"; group: Group; members: Account[]; platforms: string; latest?: string }
+    | { kind: "account"; account: Account; member: boolean };
+  const overviewRows: OverviewRow[] = [];
+  const grouped = new Set<string>();
+  for (const group of context?.groups ?? []) {
+    const members = accounts.filter((account) => group.accounts.includes(account.id));
+    if (!members.length) continue;
+    members.forEach((account) => grouped.add(account.id));
+    overviewRows.push({
+      kind: "group",
+      group,
+      members,
+      platforms: [
+        ...new Set(members.map((account) => providers[account.provider] ?? account.provider)),
+      ].join(" · "),
+      latest: members
+        .map((account) => account.snapshot?.source_time)
+        .filter((value): value is string => !!value)
+        .sort()
+        .pop(),
+    });
+    if (expanded[group.name])
+      members.forEach((account) => overviewRows.push({ kind: "account", account, member: true }));
+  }
+  accounts
+    .filter((account) => !grouped.has(account.id))
+    .forEach((account) => overviewRows.push({ kind: "account", account, member: false }));
   const name = (id: string) =>
     context?.overview.accounts.find((account) => account.id === id)?.label ?? "未知账户";
 
@@ -391,21 +437,93 @@ export function Portfolio() {
                 </p>
               </div>
             )}
-            {tab === "资产总览" && (
-              <Rows
-                headers={["账户", "平台", "已知净值", "快照时间", "同步与覆盖"]}
-                rows={accounts.map((account) => [
-                  privateText(account.label),
-                  providers[account.provider] ?? account.provider,
-                  money(account.snapshot?.net_usd),
-                  date(account.snapshot?.source_time),
-                  account.stale
-                    ? "快照过期或尚未同步"
-                    : account.snapshot?.balances_complete
-                      ? "余额已同步"
-                      : "覆盖不完整",
-                ])}
-              />
+            {tab === "资产总览" && accounts.length === 0 && (
+              <p className="text-muted-foreground py-10 text-center">
+                暂无数据。连接只读账户后开始同步。
+              </p>
+            )}
+            {tab === "资产总览" && accounts.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr>
+                      {["账户", "平台", "已知净值", "快照时间", "同步与覆盖"].map((header) => (
+                        <th
+                          key={header}
+                          className="text-muted-foreground border-b px-4 py-3 font-medium"
+                        >
+                          {header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overviewRows.map((row) =>
+                      row.kind === "group" ? (
+                        <tr
+                          key={"group:" + row.group.name}
+                          className="hover:bg-muted/40 cursor-pointer border-b"
+                          onClick={() =>
+                            setExpanded((current) => ({
+                              ...current,
+                              [row.group.name]: !current[row.group.name],
+                            }))
+                          }
+                        >
+                          <td className="whitespace-nowrap px-4 py-3 font-medium">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1"
+                              aria-expanded={!!expanded[row.group.name]}
+                            >
+                              {expanded[row.group.name] ? (
+                                <ChevronDown className="size-4" />
+                              ) : (
+                                <ChevronRight className="size-4" />
+                              )}
+                              {privateText(row.group.name)}
+                            </button>
+                            <span className="text-muted-foreground ml-2 text-xs">
+                              {row.members.length} 个账户
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">{row.platforms}</td>
+                          <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">
+                            {money(row.group.net_usd)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">{date(row.latest)}</td>
+                          <td className="whitespace-nowrap px-4 py-3">
+                            {row.group.complete ? "全部已同步" : "部分账户覆盖不完整"}
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={row.account.id} className="border-b last:border-0">
+                          <td
+                            className={
+                              "whitespace-nowrap px-4 py-3" +
+                              (row.member ? " text-muted-foreground pl-10" : "")
+                            }
+                          >
+                            {privateText(row.account.label)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">
+                            {providers[row.account.provider] ?? row.account.provider}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 tabular-nums">
+                            {money(row.account.snapshot?.net_usd)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">
+                            {date(row.account.snapshot?.source_time)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3">
+                            {accountStatus(row.account)}
+                          </td>
+                        </tr>
+                      ),
+                    )}
+                  </tbody>
+                </table>
+              </div>
             )}
             {tab === "持仓明细" && (
               <>

@@ -25,6 +25,7 @@ export interface Account {
   id: string;
   label: string;
   provider: string;
+  group?: string;
   ownership: string;
   enabled: boolean;
   included: boolean;
@@ -79,7 +80,15 @@ export interface History {
   included_accounts: number;
   note: string;
 }
+export interface Group {
+  name: string;
+  accounts: string[];
+  included_accounts: number;
+  net_usd: string | null;
+  complete: boolean;
+}
 export interface Context {
+  groups?: Group[];
   allocation?: Allocation;
   exposure?: Exposure;
   overview: {

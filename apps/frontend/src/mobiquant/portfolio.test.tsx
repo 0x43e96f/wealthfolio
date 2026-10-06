@@ -156,4 +156,38 @@ describe("private Portfolio", () => {
     expect(screen.getByText("Binance · 1 个账户")).toBeTruthy();
     expect(screen.getAllByText("BTC 类").length).toBeGreaterThan(0);
   });
+
+  it("shows grouped accounts as one row that opens to its members", async () => {
+    const data = context();
+    const main = data.overview.accounts[0];
+    const sub = { ...main, id: "sub", label: "OKX sub", group: "OKX" };
+    data.overview.accounts = [{ ...main, label: "OKX main", group: "OKX" }, sub];
+    data.groups = [
+      {
+        name: "OKX",
+        accounts: ["owned", "sub"],
+        included_accounts: 2,
+        net_usd: "246.90",
+        complete: true,
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(url.endsWith("wealthfolio/status") ? { available: false } : data),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    expect(await screen.findByText("$246.90")).toBeTruthy();
+    expect(screen.getByText("2 个账户")).toBeTruthy();
+    expect(screen.queryByText("OKX sub")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /OKX/ }));
+    expect(await screen.findByText("OKX sub")).toBeTruthy();
+    expect(screen.getByText("OKX main")).toBeTruthy();
+  });
 });
