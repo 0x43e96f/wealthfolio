@@ -127,7 +127,14 @@ export interface Exposure {
   by_instrument: { instrument: string; long_usd: string; short_usd: string; net_usd: string }[];
 }
 export interface History {
-  points: { date: string; net_usd: string; valued_accounts: number; complete: boolean }[];
+  points: {
+    date: string;
+    net_usd: string;
+    valued_accounts: number;
+    complete: boolean;
+    change_usd?: string | null;
+    change_pct?: string | null;
+  }[];
   included_accounts: number;
   note: string;
 }
@@ -150,6 +157,8 @@ export interface AccountSummary {
 export interface Context {
   groups?: Group[];
   account_summaries?: Record<string, AccountSummary>;
+  fx?: Record<string, string>;
+  net_by_currency?: Record<string, string>;
   allocation?: Allocation;
   exposure?: Exposure;
   overview: {

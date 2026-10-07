@@ -25,12 +25,23 @@ import {
   type Trades,
 } from "./client";
 
-const tabs = ["资产总览", "资产分布", "持仓明细", "衍生品", "交易流水", "每日对账"] as const;
+const tabs = [
+  "资产总览",
+  "资产曲线",
+  "资产分布",
+  "持仓明细",
+  "衍生品",
+  "交易流水",
+  "每日对账",
+] as const;
+const units = ["USD", "CAD", "CNY", "HKD"] as const;
+const classOrder = ["stablecoin", "cash", "fund", "securities", "major", "altcoin"];
+const classRank = (name: string) => classOrder.indexOf(name) + 1 || classOrder.length + 1;
+const slices = ["#2563eb", "#16a34a", "#f59e0b", "#9333ea", "#dc2626", "#0891b2", "#64748b"];
 const classes: Record<string, string> = {
-  btc: "BTC 类",
-  eth: "ETH 类",
   stablecoin: "稳定币",
-  other: "其他代币",
+  major: "主流币",
+  altcoin: "山寨币",
   securities: "股票与证券",
   fund: "基金与债券",
   cash: "现金",
@@ -42,6 +53,7 @@ const providers: Record<string, string> = {
   backpack: "Backpack",
   ibkr: "IBKR 盈透",
   futu: "富途牛牛",
+  manual: "手动账户",
   debank: "EVM 钱包",
   solana: "Solana 钱包",
 };
@@ -127,35 +139,168 @@ function Trend({ points }: { points: History["points"] }) {
     </svg>
   );
 }
-function Rows({ headers, rows }: { headers: string[]; rows: (string | null | undefined)[][] }) {
+// A cell is its text, or text with the value it sorts by when the two differ.
+type Cell = string | null | undefined | { text: string; sort: number | string };
+const sortable = (text: string, value: string | number | null | undefined): Cell => ({
+  text,
+  sort: Number(value ?? 0) || 0,
+});
+function Rows({
+  headers,
+  rows,
+  search,
+  pick,
+}: {
+  headers: string[];
+  rows: Cell[][];
+  search?: string;
+  pick?: { column: number; label: string };
+}) {
+  const [order, setOrder] = useState<{ column: number; down: boolean } | null>(null);
+  const [query, setQuery] = useState("");
+  const [choice, setChoice] = useState("");
   if (!rows.length)
     return (
       <p className="text-muted-foreground py-10 text-center">暂无数据。连接只读账户后开始同步。</p>
     );
+  const text = (cell: Cell) => (cell == null ? "—" : typeof cell === "string" ? cell : cell.text);
+  const rank = (cell: Cell) => (cell != null && typeof cell === "object" ? cell.sort : text(cell));
+  const options = pick ? [...new Set(rows.map((row) => text(row[pick.column])))].sort() : [];
+  const needle = query.trim().toLowerCase();
+  let shown = rows.filter(
+    (row) =>
+      (!needle || row.some((cell) => text(cell).toLowerCase().includes(needle))) &&
+      (!choice || !pick || text(row[pick.column]) === choice),
+  );
+  if (order)
+    shown = [...shown].sort((a, b) => {
+      const x = rank(a[order.column]);
+      const y = rank(b[order.column]);
+      const result =
+        typeof x === "number" && typeof y === "number"
+          ? x - y
+          : String(x).localeCompare(String(y), "zh-CN", { numeric: true });
+      return order.down ? -result : result;
+    });
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr>
-            {headers.map((header) => (
-              <th key={header} className="text-muted-foreground border-b px-4 py-3 font-medium">
-                {header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index} className="border-b last:border-0">
-              {row.map((cell, column) => (
-                <td key={column} className="whitespace-nowrap px-4 py-3">
-                  {cell ?? "—"}
-                </td>
+    <div>
+      {(search || pick) && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {search && (
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={search}
+              aria-label={search}
+              className="border-input bg-background h-9 w-56 rounded-md border px-3 text-sm"
+            />
+          )}
+          {pick && (
+            <select
+              value={choice}
+              onChange={(event) => setChoice(event.target.value)}
+              aria-label={pick.label}
+              className="border-input bg-background h-9 rounded-md border px-2 text-sm"
+            >
+              <option value="">{pick.label}：全部</option>
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="text-muted-foreground self-center text-xs">
+            {shown.length} / {rows.length} 行 · 点击表头排序
+          </span>
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr>
+              {headers.map((header, column) => (
+                <th key={header} className="text-muted-foreground border-b px-4 py-3 font-medium">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 whitespace-nowrap"
+                    onClick={() =>
+                      setOrder((current) =>
+                        current?.column === column
+                          ? { column, down: !current.down }
+                          : { column, down: true },
+                      )
+                    }
+                  >
+                    {header}
+                    {order?.column === column ? (order.down ? " ▼" : " ▲") : ""}
+                  </button>
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {shown.slice(0, 400).map((row, index) => (
+              <tr key={index} className="border-b last:border-0">
+                {row.map((cell, column) => (
+                  <td key={column} className="whitespace-nowrap px-4 py-3">
+                    {text(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {shown.length > 400 && (
+        <p className="text-muted-foreground mt-2 text-xs">
+          仅显示前 400 行，共 {shown.length} 行；用搜索或筛选缩小范围。
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Geometry only: the legend beside it carries the exact figures.
+function Pie({ rows }: { rows: { label: string; value: string; share: string | null }[] }) {
+  let turned = 0;
+  const arcs = rows
+    .filter((row) => Number(row.share ?? 0) > 0)
+    .map((row, index) => {
+      const share = Math.min(1, Number(row.share));
+      const from = turned * 2 * Math.PI - Math.PI / 2;
+      turned += share;
+      const to = turned * 2 * Math.PI - Math.PI / 2;
+      const point = (angle: number) =>
+        `${(100 + 90 * Math.cos(angle)).toFixed(2)} ${(100 + 90 * Math.sin(angle)).toFixed(2)}`;
+      return {
+        ...row,
+        color: slices[index % slices.length],
+        path:
+          share >= 0.9999
+            ? "M 100 10 A 90 90 0 1 1 99.99 10 Z"
+            : `M 100 100 L ${point(from)} A 90 90 0 ${share > 0.5 ? 1 : 0} 1 ${point(to)} Z`,
+      };
+    });
+  if (!arcs.length) return <p className="text-muted-foreground text-sm">暂无数据。</p>;
+  return (
+    <div className="flex flex-wrap items-center gap-8">
+      <svg viewBox="0 0 200 200" className="size-56" role="img" aria-label="资产大类占比">
+        {arcs.map((arc) => (
+          <path key={arc.label} d={arc.path} fill={arc.color} stroke="white" strokeWidth="1" />
+        ))}
+      </svg>
+      <ul className="space-y-2 text-sm">
+        {arcs.map((arc) => (
+          <li key={arc.label} className="flex items-center gap-2">
+            <span className="inline-block size-3 rounded-sm" style={{ background: arc.color }} />
+            <span className="w-24">{arc.label}</span>
+            <span className="tabular-nums">{percent(arc.share)}</span>
+            <span className="text-muted-foreground tabular-nums">{arc.value}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -171,6 +316,8 @@ export function Portfolio() {
   const [opened, setOpened] = useState<string | null>(null);
   const [trades, setTrades] = useState<Trades | null>(null);
   const [flow, setFlow] = useState<"汇总" | "成交" | "资金">("汇总");
+  const [unit, setUnit] = useState<(typeof units)[number]>("USD");
+  const [split, setSplit] = useState<"大类" | "平台" | "合并">("大类");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
@@ -224,9 +371,15 @@ export function Portfolio() {
       account: account.label,
     })),
   );
+  // The same asset in different accounts sits together, largest holding first.
+  const totals = new Map<string, number>();
+  for (const holding of holdings)
+    totals.set(holding.symbol, (totals.get(holding.symbol) ?? 0) + Number(holding.usd_value ?? 0));
+  const options = holdings.filter((holding) => holding.scope === "opt");
   const allocation = context?.allocation;
   const exposure = context?.exposure;
   const trend = history?.points ?? [];
+  const today = trend[trend.length - 1];
   const observation = (item: NonNullable<typeof allocation>["observations"][number]) =>
     item.kind === "platform_concentration"
       ? `${providers[item.subject ?? ""] ?? item.subject} 占已知净资产 ${percent(item.share)}，单一平台占比过半。`
@@ -417,14 +570,39 @@ export function Portfolio() {
         <section className="grid gap-4 md:grid-cols-3">
           <Card>
             <CardHeader>
-              <CardTitle className="text-muted-foreground text-sm font-medium">
-                已知净资产 · USD
+              <CardTitle className="text-muted-foreground flex items-center justify-between text-sm font-medium">
+                <span>已知净资产</span>
+                <span className="flex gap-1">
+                  {units.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      aria-pressed={unit === item}
+                      onClick={() => setUnit(item)}
+                      className={
+                        "rounded px-2 py-0.5 text-xs " +
+                        (unit === item ? "bg-primary text-primary-foreground" : "border")
+                      }
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-3xl font-semibold tabular-nums">
-                {money(context?.overview.known_net_usd)}
+                {hidden
+                  ? "••••"
+                  : unit === "USD" || !context?.net_by_currency?.[unit]
+                    ? usd(context?.overview.known_net_usd)
+                    : amount(context.net_by_currency[unit], unit)}
               </p>
+              {unit !== "USD" && context?.fx?.[unit] && (
+                <p className="text-muted-foreground mt-1 text-xs">
+                  1 USD = {plain(context.fx[unit])} {unit}
+                </p>
+              )}
               <p className="text-muted-foreground mt-2 text-xs">
                 {context?.overview.complete
                   ? "所选账户余额覆盖完整"
@@ -445,11 +623,18 @@ export function Portfolio() {
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle className="text-muted-foreground text-sm font-medium">今日收益</CardTitle>
+              <CardTitle className="text-muted-foreground text-sm font-medium">
+                今日净值变化
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-semibold">暂不可计算</p>
-              <p className="text-muted-foreground mt-2 text-xs">需要完整资金流水及历史估值</p>
+              <p className="text-3xl font-semibold tabular-nums">
+                {today?.change_usd != null ? money(today.change_usd) : "暂不可计算"}
+              </p>
+              <p className="text-muted-foreground mt-2 text-xs">
+                {today?.change_pct != null ? `${today.change_pct}% · ` : ""}
+                较上一日收盘（温哥华 0 点），含充值与提现
+              </p>
             </CardContent>
           </Card>
         </section>
@@ -490,8 +675,48 @@ export function Portfolio() {
                 </p>
               </div>
             )}
+            {tab === "资产曲线" && (
+              <div className="space-y-4">
+                <p className="text-muted-foreground text-sm">
+                  每天以温哥华时间 0 点为界，取各账户当日最后一次同步的净值相加。
+                  {history?.note}
+                  新接入账户的那一天不计算涨跌。
+                </p>
+                {trend.length > 1 && !hidden && <Trend points={trend} />}
+                <Rows
+                  headers={["日期", "净资产", "较前一日", "涨跌幅", "计入账户"]}
+                  rows={[...trend]
+                    .reverse()
+                    .map((point) => [
+                      point.date,
+                      sortable(money(point.net_usd), point.net_usd),
+                      sortable(
+                        point.change_usd == null ? "—" : money(point.change_usd),
+                        point.change_usd,
+                      ),
+                      sortable(
+                        point.change_pct == null ? "—" : `${point.change_pct}%`,
+                        point.change_pct,
+                      ),
+                      `${point.valued_accounts}${point.complete ? "" : "（不全）"}`,
+                    ])}
+                />
+              </div>
+            )}
             {tab === "资产分布" && (
               <div className="space-y-8">
+                <div className="flex flex-wrap gap-2">
+                  {(["大类", "平台", "合并"] as const).map((item) => (
+                    <Button
+                      key={item}
+                      size="sm"
+                      variant={split === item ? "default" : "outline"}
+                      onClick={() => setSplit(item)}
+                    >
+                      {item === "大类" ? "按大类" : item === "平台" ? "按平台" : "跨账户合并持仓"}
+                    </Button>
+                  ))}
+                </div>
                 {(allocation?.observations ?? []).length > 0 && (
                   <ul className="border-border space-y-1 rounded-lg border p-3 text-sm">
                     {allocation?.observations.map((item) => (
@@ -499,45 +724,58 @@ export function Portfolio() {
                     ))}
                   </ul>
                 )}
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">按平台 · 已知净资产</h3>
-                  <Bars
-                    rows={(allocation?.by_platform ?? []).map((row) => ({
-                      label: `${providers[row.provider] ?? row.provider} · ${row.accounts} 个账户`,
-                      value: money(row.usd),
-                      share: row.share,
-                    }))}
-                  />
-                </section>
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">按大类 · 已估值持仓</h3>
-                  <Bars
-                    rows={(allocation?.by_class ?? []).map((row) => ({
-                      label: classes[row.class] ?? row.class,
-                      value: money(row.usd),
-                      share: row.share,
-                    }))}
-                  />
-                </section>
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">跨账户合并持仓</h3>
-                  <Rows
-                    headers={["资产", "大类", "合计数量", "估值", "占比", "来源"]}
-                    rows={merged
-                      .filter((row) => dust || !small(row.usd))
-                      .map((row) => [
-                        row.symbol,
-                        classes[row.class] ?? row.class,
-                        privateText(row.quantity),
-                        money(row.usd),
-                        percent(row.share),
-                        privateText(
-                          [...new Set(row.sources.map((source) => source.account))].join("、"),
-                        ),
-                      ])}
-                  />
-                  {dustToggle}
-                </section>
+                {split === "平台" && (
+                  <section>
+                    <h3 className="mb-3 text-sm font-medium">按平台 · 已知净资产</h3>
+                    <Bars
+                      rows={(allocation?.by_platform ?? []).map((row) => ({
+                        label: `${providers[row.provider] ?? row.provider} · ${row.accounts} 个账户`,
+                        value: money(row.usd),
+                        share: row.share,
+                      }))}
+                    />
+                  </section>
+                )}
+                {split === "大类" && (
+                  <section>
+                    <h3 className="mb-3 text-sm font-medium">按大类 · 已估值持仓</h3>
+                    <Pie
+                      rows={(allocation?.by_class ?? []).map((row) => ({
+                        label: classes[row.class] ?? row.class,
+                        value: money(row.usd),
+                        share: row.share,
+                      }))}
+                    />
+                  </section>
+                )}
+                {split === "合并" && (
+                  <section>
+                    <h3 className="mb-3 text-sm font-medium">跨账户合并持仓</h3>
+                    <Rows
+                      search="搜索资产"
+                      pick={{ column: 1, label: "大类" }}
+                      headers={["资产", "大类", "合计数量", "估值", "占比", "来源"]}
+                      rows={[...merged]
+                        .filter((row) => dust || !small(row.usd))
+                        .sort(
+                          (a, b) =>
+                            classRank(a.class) - classRank(b.class) ||
+                            Number(b.usd) - Number(a.usd),
+                        )
+                        .map((row) => [
+                          row.symbol,
+                          classes[row.class] ?? row.class,
+                          sortable(privateText(plain(row.quantity)), row.quantity),
+                          sortable(money(row.usd), row.usd),
+                          sortable(percent(row.share), row.share),
+                          privateText(
+                            [...new Set(row.sources.map((source) => source.account))].join("、"),
+                          ),
+                        ])}
+                    />
+                    {dustToggle}
+                  </section>
+                )}
                 <p className="text-muted-foreground text-xs">
                   占比按已有报价的代币持仓计算；协议仓位已包含在钱包净值中，不重复拆分。链上同名代币按各自合约分开统计。
                 </p>
@@ -662,14 +900,22 @@ export function Portfolio() {
             {tab === "持仓明细" && (
               <>
                 <Rows
+                  search="搜索资产或账户"
+                  pick={{ column: 1, label: "账户" }}
                   headers={["资产", "账户", "数量", "估值", "账户范围"]}
-                  rows={holdings
+                  rows={[...holdings]
                     .filter((holding) => dust || !small(holding.usd_value))
+                    .sort(
+                      (a, b) =>
+                        (totals.get(b.symbol) ?? 0) - (totals.get(a.symbol) ?? 0) ||
+                        a.symbol.localeCompare(b.symbol) ||
+                        Number(b.usd_value ?? 0) - Number(a.usd_value ?? 0),
+                    )
                     .map((holding) => [
                       holding.symbol,
                       privateText(holding.account),
-                      privateText(holding.quantity),
-                      money(holding.usd_value),
+                      sortable(privateText(plain(holding.quantity)), holding.quantity),
+                      sortable(money(holding.usd_value), holding.usd_value),
                       holding.scope,
                     ])}
                 />
@@ -694,15 +940,33 @@ export function Portfolio() {
                   </p>
                 )}
                 <Rows
-                  headers={["合约", "账户", "方向", "数量", "名义敞口", "未实现盈亏"]}
-                  rows={positions.map((position) => [
-                    position.instrument,
-                    privateText(position.account),
-                    position.side,
-                    privateText(position.quantity),
-                    money(position.notional_usd),
-                    money(position.unrealized_pnl),
-                  ])}
+                  search="搜索合约"
+                  headers={["合约", "账户", "方向", "数量", "名义敞口 / 期权市值", "未实现盈亏"]}
+                  rows={[
+                    ...positions.map((position): Cell[] => [
+                      position.instrument,
+                      privateText(position.account),
+                      position.side,
+                      sortable(privateText(plain(position.quantity)), position.quantity),
+                      sortable(money(position.notional_usd), position.notional_usd),
+                      sortable(money(position.unrealized_pnl), position.unrealized_pnl),
+                    ]),
+                    // Options held at a broker: the value shown is the premium's
+                    // market value, which is already part of net assets.
+                    ...options.map((holding): Cell[] => [
+                      holding.symbol,
+                      privateText(holding.account),
+                      holding.quantity.startsWith("-") ? "期权 · 卖方" : "期权 · 买方",
+                      sortable(privateText(plain(holding.quantity)), holding.quantity),
+                      sortable(money(holding.usd_value), holding.usd_value),
+                      holding.pnl != null
+                        ? sortable(
+                            hidden ? "••••" : amount(holding.pnl, holding.currency ?? ""),
+                            holding.pnl,
+                          )
+                        : "—",
+                    ]),
+                  ]}
                 />
               </>
             )}
@@ -728,6 +992,8 @@ export function Portfolio() {
                       标“不完整”表示这段成交之前就已有持仓（按现持仓倒推），那部分成本未知，数字仅供参考。
                     </p>
                     <Rows
+                      search="搜索标的"
+                      pick={{ column: 1, label: "账户" }}
                       headers={[
                         "标的",
                         "账户",
@@ -741,20 +1007,35 @@ export function Portfolio() {
                       rows={(trades?.summary ?? []).map((row) => [
                         row.instrument,
                         privateText(row.account),
-                        `${privateText(plain(row.bought))} @ ${plain(row.average_buy)}`,
-                        `${privateText(plain(row.sold))} @ ${plain(row.average_sell)}`,
-                        `${privateText(plain(row.net_position))} @ ${plain(row.average_cost)}`,
-                        hidden
-                          ? "••••"
-                          : `${amount(row.realized, row.quote)}（${
-                              row.basis === "source"
-                                ? "平台"
-                                : row.basis === "computed"
-                                  ? "推算"
-                                  : `不完整，期初约 ${plain(row.opening_position)}`
-                            }）`,
-                        privateText(plain(row.fees)),
-                        `${date(row.first).slice(0, 10)} – ${date(row.last).slice(0, 10)}`,
+                        sortable(
+                          `${privateText(plain(row.bought))} @ ${plain(row.average_buy)}`,
+                          row.bought,
+                        ),
+                        sortable(
+                          `${privateText(plain(row.sold))} @ ${plain(row.average_sell)}`,
+                          row.sold,
+                        ),
+                        sortable(
+                          `${privateText(plain(row.net_position))} @ ${plain(row.average_cost)}`,
+                          row.net_position,
+                        ),
+                        sortable(
+                          hidden
+                            ? "••••"
+                            : `${amount(row.realized, row.quote)}（${
+                                row.basis === "source"
+                                  ? "平台"
+                                  : row.basis === "computed"
+                                    ? "推算"
+                                    : `不完整，期初约 ${plain(row.opening_position)}`
+                              }）`,
+                          row.realized,
+                        ),
+                        sortable(privateText(plain(row.fees)), row.fees),
+                        {
+                          text: `${date(row.first).slice(0, 10)} – ${date(row.last).slice(0, 10)}`,
+                          sort: row.last,
+                        },
                       ])}
                     />
                   </>
@@ -762,7 +1043,7 @@ export function Portfolio() {
                 {flow === "成交" && (
                   <>
                     <p className="text-muted-foreground mb-4 text-sm">
-                      共 {trades?.total ?? 0} 笔成交，显示最近 {trades?.fills.length ?? 0} 笔。
+                      共 {trades?.total ?? 0} 笔成交，已载入最近 {trades?.fills.length ?? 0} 笔。
                       合约的数量单位以平台为准（OKX 为张）。
                     </p>
                     <Rows
@@ -776,15 +1057,22 @@ export function Portfolio() {
                         "手续费",
                         "平台盈亏",
                       ]}
+                      search="搜索标的或账户"
+                      pick={{ column: 3, label: "方向" }}
                       rows={(trades?.fills ?? []).map((fill) => [
-                        date(fill.occurred_at),
+                        { text: date(fill.occurred_at), sort: fill.occurred_at },
                         privateText(fill.account),
                         fill.asset,
                         fill.amount.startsWith("-") ? "卖出" : "买入",
-                        privateText(plain(fill.amount.replace("-", ""))),
-                        `${plain(fill.price)} ${fill.quote}`,
-                        privateText(plain(fill.fee)),
-                        fill.pnl == null ? "—" : hidden ? "••••" : amount(fill.pnl, fill.quote),
+                        sortable(
+                          privateText(plain(fill.amount.replace("-", ""))),
+                          fill.amount.replace("-", ""),
+                        ),
+                        sortable(`${plain(fill.price)} ${fill.quote}`, fill.price),
+                        sortable(privateText(plain(fill.fee)), fill.fee),
+                        fill.pnl == null
+                          ? "—"
+                          : sortable(hidden ? "••••" : amount(fill.pnl, fill.quote), fill.pnl),
                       ])}
                     />
                   </>

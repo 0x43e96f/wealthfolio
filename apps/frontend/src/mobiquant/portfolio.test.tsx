@@ -52,7 +52,7 @@ function context(): Context {
         {
           asset: "btc",
           symbol: "BTC",
-          class: "btc",
+          class: "major",
           quantity: "1",
           usd: "123.45",
           share: "1.0000",
@@ -67,7 +67,7 @@ function context(): Context {
           ],
         },
       ],
-      by_class: [{ class: "btc", usd: "123.45", share: "1.0000" }],
+      by_class: [{ class: "major", usd: "123.45", share: "1.0000" }],
       unpriced: [],
       observations: [{ kind: "asset_concentration", subject: "BTC", share: "1.0000" }],
     },
@@ -153,8 +153,17 @@ describe("private Portfolio", () => {
     expect(screen.getByText(/不代表投资收益/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "资产分布" }));
     expect(await screen.findByText(/BTC 占已估值持仓 100.00%/)).toBeTruthy();
+    // One view at a time: the pie by category first, the others on request.
+    expect(screen.getByRole("img", { name: "资产大类占比" })).toBeTruthy();
+    expect(screen.getAllByText("主流币").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Binance · 1 个账户")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "按平台" }));
     expect(screen.getByText("Binance · 1 个账户")).toBeTruthy();
-    expect(screen.getAllByText("BTC 类").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "跨账户合并持仓" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索资产" }), {
+      target: { value: "eth" },
+    });
+    expect(screen.getByText(/0 \/ 1 行/)).toBeTruthy();
   });
 
   it("shows grouped accounts as one row that opens to its members", async () => {
@@ -311,7 +320,58 @@ describe("private Portfolio", () => {
     expect(screen.getByText("0.5 @ 59,749.1")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "成交明细" }));
     expect(await screen.findByText("60,000.1 USDT")).toBeTruthy();
-    expect(screen.getByText("卖出")).toBeTruthy();
+    expect(screen.getAllByText("卖出").length).toBe(2);
+    fireEvent.change(screen.getByRole("combobox", { name: "方向" }), {
+      target: { value: "卖出" },
+    });
+    expect(screen.getByText(/1 \/ 1 行/)).toBeTruthy();
     expect(screen.getByText("125.50 USDT")).toBeTruthy();
+  });
+
+  it("shows net assets in the chosen currency and each day's change on the curve", async () => {
+    const data = context();
+    data.fx = { USD: "1.000000", CAD: "1.421400" };
+    data.net_by_currency = { USD: "123.450000", CAD: "175.471830" };
+    const past = {
+      points: [
+        { date: "2026-10-05", net_usd: "100", valued_accounts: 1, complete: true },
+        {
+          date: "2026-10-06",
+          net_usd: "123.45",
+          valued_accounts: 1,
+          complete: true,
+          change_usd: "23.45",
+          change_pct: "23.45",
+        },
+      ],
+      included_accounts: 1,
+      note: "不代表投资收益。",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.endsWith("history")
+                  ? past
+                  : data,
+            ),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "CAD" }));
+    expect(await screen.findByText("175.47 CAD")).toBeTruthy();
+    expect(screen.getByText("1 USD = 1.4214 CAD")).toBeTruthy();
+    // Today's change against yesterday's close heads the page.
+    expect(screen.getAllByText("$23.45").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "资产曲线" }));
+    expect(await screen.findByText("23.45%")).toBeTruthy();
+    expect(screen.getByText("2026-10-05")).toBeTruthy();
   });
 });
