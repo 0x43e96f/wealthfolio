@@ -550,9 +550,28 @@ export function Portfolio() {
   const merged = allocation?.by_asset ?? [];
   // Each asset's share of everything valued, across all accounts: the largest
   // eleven on their own and the rest together. Pointing at one lists where it sits.
-  const ranked = [...merged]
-    .filter((row) => !small(row.usd))
-    .sort((a, b) => Number(b.usd) - Number(a.usd));
+  // The table keeps a wallet token apart from the exchange coin of the same name,
+  // since a contract can call itself anything. For this chart a stablecoin or a
+  // major coin that has passed that check counts as one asset wherever it sits.
+  const combined = new Map<string, (typeof merged)[number]>();
+  for (const row of merged) {
+    if (small(row.usd)) continue;
+    const key =
+      row.class === "stablecoin" || row.class === "major" ? row.symbol.toUpperCase() : row.asset;
+    const held = combined.get(key);
+    combined.set(
+      key,
+      held
+        ? {
+            ...held,
+            usd: String(Number(held.usd) + Number(row.usd)),
+            share: String(Number(held.share ?? 0) + Number(row.share ?? 0)),
+            sources: [...held.sources, ...row.sources],
+          }
+        : row,
+    );
+  }
+  const ranked = [...combined.values()].sort((a, b) => Number(b.usd) - Number(a.usd));
   const rest = ranked.slice(11);
   const assetSlices = [
     ...ranked.slice(0, 11).map((row) => ({
