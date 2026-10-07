@@ -200,15 +200,45 @@ function Trend({
       );
       return [start, start + size];
     });
+  // Dragging moves the window: the curve follows the pointer, so dragging right
+  // brings earlier days into view.
+  const grip = useRef<{ x: number; start: number } | null>(null);
+  const hold = (clientX: number) => {
+    if (range) grip.current = { x: clientX, start: range[0] };
+  };
+  const pull = (clientX: number) => {
+    const held = grip.current;
+    const width = frame.current?.getBoundingClientRect().width;
+    if (!held || !range || !width) return;
+    const size = range[1] - range[0];
+    const start = Math.max(
+      0,
+      Math.min(total - 1 - size, held.start - Math.round(((clientX - held.x) / width) * size)),
+    );
+    if (start !== range[0]) setRange([start, start + size]);
+  };
+  const release = () => {
+    grip.current = null;
+  };
   if (!total) return null;
   return (
-    <div ref={frame}>
+    <div
+      ref={frame}
+      className={range ? "cursor-grab select-none active:cursor-grabbing" : undefined}
+      onMouseDown={(event) => hold(event.clientX)}
+      onMouseMove={(event) => pull(event.clientX)}
+      onMouseUp={release}
+      onMouseLeave={release}
+      onTouchStart={(event) => hold(event.touches[0].clientX)}
+      onTouchMove={(event) => pull(event.touches[0].clientX)}
+      onTouchEnd={release}
+    >
       <TrendView points={points.slice(from, to + 1)} money={money} />
       <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-xs">
         {range ? (
           <>
             <span>
-              已放大：{points[from].date} 至 {points[to].date}
+              已放大：{points[from].date} 至 {points[to].date} · 按住图表左右拖动
             </span>
             <button type="button" className="underline" onClick={() => shift(-1)}>
               ← 往前
@@ -221,7 +251,7 @@ function Trend({
             </button>
           </>
         ) : (
-          total > 3 && <span>在图上向上滚动放大，向下滚动缩小。</span>
+          total > 3 && <span>在图上向上滚动放大，向下滚动缩小；放大后可以按住拖动。</span>
         )}
       </div>
     </div>

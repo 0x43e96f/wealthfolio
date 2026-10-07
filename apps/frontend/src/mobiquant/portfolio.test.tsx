@@ -652,6 +652,19 @@ describe("private Portfolio", () => {
     // Scrolling up at the right edge keeps the latest days and drops early ones.
     fireEvent.wheel(frame, { deltaY: -100, clientX: 800 });
     expect(screen.getByText(/已放大：2026-09-09 至 2026-10-10/)).toBeTruthy();
+    // Dragging the chart to the right by a quarter of its width brings earlier
+    // days in: a quarter of the 31-day window, eight days.
+    fireEvent.mouseDown(frame, { clientX: 300 });
+    fireEvent.mouseMove(frame, { clientX: 500 });
+    fireEvent.mouseUp(frame);
+    expect(screen.getByText(/已放大：2026-09-01 至/)).toBeTruthy();
+    // Once released, moving the pointer no longer drags.
+    fireEvent.mouseMove(frame, { clientX: 100 });
+    expect(screen.getByText(/已放大：2026-09-01 至/)).toBeTruthy();
+    fireEvent.mouseDown(frame, { clientX: 500 });
+    fireEvent.mouseMove(frame, { clientX: 300 });
+    fireEvent.mouseUp(frame);
+    expect(screen.getByText(/已放大：2026-09-09 至/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "← 往前" }));
     expect(screen.getByText(/已放大：2026-09-01 至/)).toBeTruthy();
     // Scrolling down far enough shows everything again.
