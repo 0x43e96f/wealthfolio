@@ -68,6 +68,22 @@ function context(): Context {
         },
       ],
       by_class: [{ class: "major", usd: "123.45", share: "1.0000" }],
+      by_denomination: [
+        {
+          denomination: "HKD",
+          usd: "300",
+          share: "0.7500",
+          classes: [{ class: "securities", usd: "300" }],
+          items: [{ symbol: "1 A", usd: "300" }],
+        },
+        {
+          denomination: "crypto",
+          usd: "100",
+          share: "0.2500",
+          classes: [{ class: "major", usd: "100" }],
+          items: [{ symbol: "BTC", usd: "100" }],
+        },
+      ],
       unpriced: [],
       observations: [{ kind: "asset_concentration", subject: "BTC", share: "1.0000" }],
     },
@@ -160,6 +176,11 @@ describe("private Portfolio", () => {
     expect(screen.getByText(/BTC · \$123\.45/)).toBeTruthy();
     expect(screen.getAllByText("主流币").length).toBeGreaterThan(0);
     expect(screen.queryByText("Binance · 1 个账户")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "按币种" }));
+    expect(screen.getByRole("img", { name: "币种占比" })).toBeTruthy();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /港元资产/ }));
+    expect(screen.getByText(/股票与证券合计 · \$300\.00/)).toBeTruthy();
+    expect(screen.getByText(/1 A · \$300\.00/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "按平台" }));
     expect(screen.getAllByText("Binance · 1 个账户").length).toBeGreaterThan(0);
     fireEvent.mouseEnter(screen.getByRole("button", { name: /Binance · 1 个账户/ }));

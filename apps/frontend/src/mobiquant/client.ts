@@ -149,6 +149,13 @@ export interface Allocation {
     sources: AllocationSource[];
   }[];
   by_class: { class: string; usd: string; share: string | null }[];
+  by_denomination?: {
+    denomination: string;
+    usd: string;
+    share: string | null;
+    classes: { class: string; usd: string }[];
+    items: { symbol: string; usd: string }[];
+  }[];
   unpriced: (AllocationSource & { symbol: string })[];
   observations: { kind: string; subject?: string; share?: string; count?: number }[];
 }

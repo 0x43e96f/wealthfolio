@@ -52,6 +52,15 @@ const bars = [
   ["1d", "日"],
   ["1M", "月"],
 ] as const;
+const denominations: Record<string, string> = {
+  CNY: "人民币资产",
+  HKD: "港元资产",
+  USD: "美元资产",
+  CAD: "加元资产",
+  stablecoin: "稳定币（U）",
+  crypto: "加密货币（非稳定币）",
+  unknown: "未注明币种",
+};
 const classOrder = ["stablecoin", "cash", "fund", "securities", "major", "altcoin"];
 const classRank = (name: string) => classOrder.indexOf(name) + 1 || classOrder.length + 1;
 const slices = [
@@ -387,7 +396,10 @@ function Pie({
   if (!arcs.length) return <p className="text-muted-foreground text-sm">暂无数据。</p>;
   const current = arcs.find((arc) => arc.label === over);
   return (
-    <div className="flex flex-wrap items-start gap-8" onMouseLeave={() => setOver(null)}>
+    <div
+      className="grid items-start gap-8 md:grid-cols-[14rem_minmax(0,22rem)_minmax(0,1fr)]"
+      onMouseLeave={() => setOver(null)}
+    >
       <svg viewBox="0 0 200 200" className="size-56 shrink-0" role="img" aria-label={label}>
         {arcs.map((arc) => (
           <path
@@ -425,7 +437,9 @@ function Pie({
           </li>
         ))}
       </ul>
-      <div className="border-border min-h-40 min-w-64 flex-1 rounded-lg border p-3 text-sm">
+      {/* A fixed height: what is listed here must never move the page, or the
+          slice under the pointer changes and the reading flickers. */}
+      <div className="border-border h-72 overflow-y-auto rounded-lg border p-3 text-sm">
         {current ? (
           <>
             <p className="mb-2 font-medium">
@@ -477,7 +491,7 @@ export function Portfolio() {
   }, [bar, context?.overview.as_of]);
   const [flow, setFlow] = useState<"汇总" | "成交" | "资金">("汇总");
   const [unit, setUnit] = useState<(typeof units)[number]>("USD");
-  const [split, setSplit] = useState<"大类" | "平台" | "合并">("大类");
+  const [split, setSplit] = useState<"大类" | "币种" | "平台" | "合并">("大类");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
@@ -945,14 +959,20 @@ export function Portfolio() {
             {tab === "资产分布" && (
               <div className="space-y-8">
                 <div className="flex flex-wrap gap-2">
-                  {(["大类", "平台", "合并"] as const).map((item) => (
+                  {(["大类", "币种", "平台", "合并"] as const).map((item) => (
                     <Button
                       key={item}
                       size="sm"
                       variant={split === item ? "default" : "outline"}
                       onClick={() => setSplit(item)}
                     >
-                      {item === "大类" ? "按大类" : item === "平台" ? "按平台" : "跨账户合并持仓"}
+                      {item === "大类"
+                        ? "按大类"
+                        : item === "币种"
+                          ? "按币种"
+                          : item === "平台"
+                            ? "按平台"
+                            : "跨账户合并持仓"}
                     </Button>
                   ))}
                 </div>
@@ -1011,6 +1031,35 @@ export function Portfolio() {
                         };
                       })}
                     />
+                  </section>
+                )}
+                {split === "币种" && (
+                  <section>
+                    <h3 className="mb-3 text-sm font-medium">
+                      按币种 · 各国货币资产、稳定币与其他加密货币
+                    </h3>
+                    <Pie
+                      label="币种占比"
+                      rows={(allocation?.by_denomination ?? []).map((row) => ({
+                        label: denominations[row.denomination] ?? `${row.denomination} 资产`,
+                        value: money(row.usd),
+                        share: row.share,
+                        detail: [
+                          ...row.classes.map(
+                            (part) =>
+                              `${classes[part.class] ?? part.class}合计 · ${money(part.usd)}`,
+                          ),
+                          "——",
+                          ...row.items
+                            .filter((item) => !small(item.usd))
+                            .map((item) => `${item.symbol} · ${money(item.usd)}`),
+                        ],
+                      }))}
+                    />
+                    <p className="text-muted-foreground mt-3 text-xs">
+                      美元、港元、人民币、加元资产包含该币种的现金、股票和基金，都已折成美元显示；
+                      稳定币和其他加密货币单独成类，不计入美元资产。
+                    </p>
                   </section>
                 )}
                 {split === "合并" && (
