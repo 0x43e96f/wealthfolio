@@ -421,6 +421,9 @@ describe("private Portfolio", () => {
     expect(screen.getByText("2026-10-05 收盘")).toBeTruthy();
     fireEvent.mouseLeave(chart);
     expect(screen.getByText("2026-10-06 收盘")).toBeTruthy();
+    // Two points are too few to zoom into: scrolling leaves the curve whole.
+    fireEvent.wheel(chart, { deltaY: -100, clientX: 400 });
+    expect(screen.queryByText(/已放大/)).toBeNull();
     // Other bar sizes are read on request, from the same endpoint.
     fireEvent.click(screen.getByRole("button", { name: "1 小时" }));
     await waitFor(() =>
@@ -605,5 +608,55 @@ describe("private Portfolio", () => {
       usd: "1200",
       destination: "canada",
     });
+  });
+
+  it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
+    const data = context();
+    const past = {
+      points: Array.from({ length: 40 }, (_, index) => ({
+        date: `2026-09-${String(index + 1).padStart(2, "0")}`
+          .replace("2026-09-3", "2026-10-0")
+          .replace("2026-09-4", "2026-10-1"),
+        net_usd: String(1000 + index * 10),
+        valued_accounts: 1,
+        complete: true,
+        change_usd: index ? "10" : null,
+        change_pct: null,
+      })),
+      included_accounts: 1,
+      note: "",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.includes("history")
+                  ? past
+                  : data,
+            ),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "资产曲线" }));
+    const chart = await screen.findByRole("img", { name: "净资产历史曲线" });
+    const frame = chart.parentElement!.parentElement!;
+    frame.getBoundingClientRect = () => ({ left: 0, width: 800 }) as DOMRect;
+    expect(screen.getByText(/向上滚动放大/)).toBeTruthy();
+    // Scrolling up at the right edge keeps the latest days and drops early ones.
+    fireEvent.wheel(frame, { deltaY: -100, clientX: 800 });
+    expect(screen.getByText(/已放大：2026-09-09 至 2026-10-10/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "← 往前" }));
+    expect(screen.getByText(/已放大：2026-09-01 至/)).toBeTruthy();
+    // Scrolling down far enough shows everything again.
+    fireEvent.wheel(frame, { deltaY: 100, clientX: 400 });
+    fireEvent.wheel(frame, { deltaY: 100, clientX: 400 });
+    expect(screen.queryByText(/已放大/)).toBeNull();
   });
 });

@@ -147,7 +147,88 @@ function date(value: string | undefined) {
 // An exchange-style balance curve: one point per day's close, a filled area, and
 // a reading for whichever day the pointer is over. Geometry uses floats; every
 // figure shown is formatted from the exact strings.
+// The curve with a window onto it. Scrolling up over the chart zooms in around
+// the pointer and scrolling down zooms out; the arrows move the window along.
 function Trend({
+  points,
+  money,
+}: {
+  points: History["points"];
+  money: (value: string | null | undefined) => string;
+}) {
+  const [range, setRange] = useState<[number, number] | null>(null);
+  const frame = useRef<HTMLDivElement>(null);
+  const total = points.length;
+  const [from, to] = range && range[1] < total ? range : [0, total - 1];
+  useEffect(() => {
+    const node = frame.current;
+    if (!node) return;
+    // Registered by hand: the page must not scroll while the chart is zoomed,
+    // and React's own wheel listener is not allowed to prevent that.
+    const wheel = (event: WheelEvent) => {
+      if (total < 4) return;
+      event.preventDefault();
+      const box = node.getBoundingClientRect();
+      const ratio = box.width
+        ? Math.min(1, Math.max(0, (event.clientX - box.left) / box.width))
+        : 0.5;
+      setRange((current) => {
+        const [a, b] = current && current[1] < total ? current : [0, total - 1];
+        const size = b - a;
+        const next = Math.max(
+          2,
+          Math.min(total - 1, Math.round(size * (event.deltaY < 0 ? 0.8 : 1.25))),
+        );
+        if (next >= total - 1) return null;
+        const start = Math.max(
+          0,
+          Math.min(total - 1 - next, Math.round(a + ratio * size - ratio * next)),
+        );
+        return [start, start + next];
+      });
+    };
+    node.addEventListener("wheel", wheel, { passive: false });
+    return () => node.removeEventListener("wheel", wheel);
+  }, [total]);
+  const shift = (direction: number) =>
+    setRange((current) => {
+      if (!current) return current;
+      const size = current[1] - current[0];
+      const start = Math.max(
+        0,
+        Math.min(total - 1 - size, current[0] + direction * Math.max(1, Math.round(size / 3))),
+      );
+      return [start, start + size];
+    });
+  if (!total) return null;
+  return (
+    <div ref={frame}>
+      <TrendView points={points.slice(from, to + 1)} money={money} />
+      <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-xs">
+        {range ? (
+          <>
+            <span>
+              已放大：{points[from].date} 至 {points[to].date}
+            </span>
+            <button type="button" className="underline" onClick={() => shift(-1)}>
+              ← 往前
+            </button>
+            <button type="button" className="underline" onClick={() => shift(1)}>
+              往后 →
+            </button>
+            <button type="button" className="underline" onClick={() => setRange(null)}>
+              看全部
+            </button>
+          </>
+        ) : (
+          total > 3 && <span>在图上向上滚动放大，向下滚动缩小。</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TrendView({
   points,
   money,
 }: {
@@ -169,7 +250,7 @@ function Trend({
   const y = (value: number) =>
     height - pad - ((value - floor) / (top - floor)) * (height - 2 * pad);
   const line = values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`);
-  const shown = at ?? points.length - 1;
+  const shown = Math.min(at ?? points.length - 1, points.length - 1);
   const point = points[shown];
   const move = (event: PointerMove<SVGSVGElement> | FingerMove<SVGSVGElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
