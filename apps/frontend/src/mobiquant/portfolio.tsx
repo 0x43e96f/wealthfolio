@@ -33,11 +33,15 @@ import {
   type Trades,
   saveYield,
   type Yields,
+  saveCashout,
+  type Finance,
+  type Period,
 } from "./client";
 
 const tabs = [
   "资产总览",
   "资产曲线",
+  "财务全景",
   "资产分布",
   "持仓明细",
   "衍生品",
@@ -60,6 +64,15 @@ const denominations: Record<string, string> = {
   stablecoin: "稳定币（U）",
   crypto: "加密货币（非稳定币）",
   unknown: "未注明币种",
+};
+const places: Record<string, string> = {
+  china: "中国账户",
+  canada: "加拿大",
+  hongkong: "香港（富途与香港银行）",
+  ibkr: "IBKR",
+  usd: "美元账户",
+  card: "刷卡消费",
+  subscription: "会员与订阅",
 };
 const classOrder = ["stablecoin", "cash", "fund", "securities", "major", "altcoin"];
 const classRank = (name: string) => classOrder.indexOf(name) + 1 || classOrder.length + 1;
@@ -484,6 +497,9 @@ export function Portfolio() {
   const [opened, setOpened] = useState<string | null>(null);
   const [trades, setTrades] = useState<Trades | null>(null);
   const [yields, setYields] = useState<Yields | null>(null);
+  const [finance, setFinance] = useState<Finance | null>(null);
+  const [line, setLine] = useState<"net" | "generated">("net");
+  const [entry, setEntry] = useState({ day: "", place: "", usd: "", destination: "china" });
   const [bar, setBar] = useState<(typeof bars)[number][0]>("1d");
   const [curve, setCurve] = useState<History | null>(null);
   // The curve's own reading, at whichever bar size is chosen. The daily series
@@ -518,7 +534,7 @@ export function Portfolio() {
     setBusy(true);
     setError("");
     try {
-      const [data, status, past, deals, income] = await Promise.all([
+      const [data, status, past, deals, income, long] = await Promise.all([
         readAsset<Context>("context", current.signal),
         readAsset<LedgerStatus>("wealthfolio/status", current.signal).catch(() => ({
           available: false,
@@ -526,6 +542,7 @@ export function Portfolio() {
         readAsset<History>("history", current.signal).catch(() => null),
         readAsset<Trades>("trades?days=365", current.signal).catch(() => null),
         readAsset<Yields>("yields", current.signal).catch(() => null),
+        readAsset<Finance>("finance", current.signal).catch(() => null),
       ]);
       if (current.signal.aborted) return;
       if (!Array.isArray(data.overview?.accounts) || !Array.isArray(data.recent_events))
@@ -535,6 +552,7 @@ export function Portfolio() {
       if (past && Array.isArray(past.points)) setHistory(past);
       if (deals && Array.isArray(deals.fills)) setTrades(deals);
       if (income && Array.isArray(income.rows)) setYields(income);
+      if (long && Array.isArray(long.points)) setFinance(long);
     } catch {
       if (controller.current === current)
         setError("刷新失败。保留上次显示的数据，请检查同步状态并稍后重试。");
@@ -568,6 +586,36 @@ export function Portfolio() {
   for (const holding of holdings)
     totals.set(holding.symbol, (totals.get(holding.symbol) ?? 0) + Number(holding.usd_value ?? 0));
   const options = holdings.filter((holding) => holding.scope === "opt");
+  const addCashout = async () => {
+    try {
+      await saveCashout({ ...entry, usd: entry.usd.replace(/,/g, "").trim() });
+      setEntry({ day: "", place: "", usd: "", destination: entry.destination });
+      await refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "保存失败");
+    }
+  };
+  // The long curve reuses the balance chart: one reading per day that has one.
+  const longLine = (finance?.points ?? []).map((point, index, all) => {
+    const value = line === "net" ? point.net_usd : point.generated_usd;
+    const before = index
+      ? line === "net"
+        ? all[index - 1].net_usd
+        : all[index - 1].generated_usd
+      : null;
+    return {
+      date: point.date,
+      net_usd: value,
+      valued_accounts: 1,
+      complete: true,
+      change_usd: before == null ? null : String(Math.round(Number(value) - Number(before))),
+      change_pct: null,
+    };
+  });
+  const result = (row: Period) =>
+    row.result_usd == null
+      ? "—"
+      : sortable(money(row.result_usd) + (row.basis_changed ? " *" : ""), row.result_usd);
   const editYield = async (connection: string, asset: string, current?: string) => {
     const answer = window.prompt(
       `${asset} 的年化（%）。留空并确定 = 清除手填的年化。`,
@@ -966,6 +1014,182 @@ export function Portfolio() {
                       `${point.valued_accounts}${point.complete ? "" : "（不全）"}`,
                     ])}
                 />
+              </div>
+            )}
+            {tab === "财务全景" && (
+              <div className="space-y-8">
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                  {(
+                    [
+                      ["加密资产现值", money(finance?.points[finance.points.length - 1]?.net_usd)],
+                      ["累计出金", money(finance?.cashout_total_usd)],
+                      [
+                        "累计创造（现值 + 出金）",
+                        money(finance?.points[finance.points.length - 1]?.generated_usd),
+                      ],
+                      ["出金后仍在各账户里的", money(finance?.kept_usd)],
+                    ] as const
+                  ).map(([title, value]) => (
+                    <div key={title}>
+                      <p className="text-muted-foreground text-xs">{title}</p>
+                      <p className="text-xl font-semibold tabular-nums">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <section className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="mr-2 text-sm font-medium">加密资产 · 2021 年至今</h3>
+                    {(
+                      [
+                        ["net", "净值"],
+                        ["generated", "净值 + 累计出金"],
+                      ] as const
+                    ).map(([value, title]) => (
+                      <Button
+                        key={value}
+                        size="sm"
+                        variant={line === value ? "default" : "outline"}
+                        onClick={() => setLine(value)}
+                      >
+                        {title}
+                      </Button>
+                    ))}
+                  </div>
+                  {longLine.length > 0 && !hidden && <Trend points={longLine} money={money} />}
+                  <p className="text-muted-foreground text-xs">
+                    {finance?.note}
+                    “净值 + 累计出金”把取走的钱加回去，看的是加密这边一共创造了多少。
+                  </p>
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">按年</h3>
+                  <Rows
+                    headers={["年份", "年末净值", "当年出金", "净值变化", "当年盈亏"]}
+                    rows={[...(finance?.yearly ?? [])]
+                      .reverse()
+                      .map((row) => [
+                        row.period,
+                        sortable(money(row.close_usd), row.close_usd),
+                        sortable(money(row.cashout_usd), row.cashout_usd),
+                        row.change_usd == null
+                          ? "—"
+                          : sortable(money(row.change_usd), row.change_usd),
+                        result(row),
+                      ])}
+                  />
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">按月</h3>
+                  <Rows
+                    search="搜索月份，例如 2024"
+                    headers={["月份", "月末净值", "当月出金", "净值变化", "当月盈亏"]}
+                    rows={[...(finance?.monthly ?? [])]
+                      .reverse()
+                      .map((row) => [
+                        row.period,
+                        sortable(money(row.close_usd), row.close_usd),
+                        sortable(money(row.cashout_usd), row.cashout_usd),
+                        row.change_usd == null
+                          ? "—"
+                          : sortable(money(row.change_usd), row.change_usd),
+                        result(row),
+                      ])}
+                  />
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    盈亏 = 净值变化 +
+                    当期出金：取走的钱是赚到的，不是亏掉的。没有记录的月份不显示。带 *
+                    的那一期跨越了手工记录和自动同步的交接，两边统计的钱包不完全相同，数字不可比。
+                  </p>
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">出金去了哪里</h3>
+                  <Pie
+                    label="出金去向"
+                    rows={(finance?.destinations ?? []).map((row) => ({
+                      label: places[row.destination] ?? row.destination,
+                      value: money(row.moved_usd),
+                      share: row.share,
+                      detail: row.places.map((item) => `${item.place} · ${money(item.usd)}`),
+                    }))}
+                  />
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">转过去的钱，现在还剩多少</h3>
+                  <Rows
+                    headers={["去向", "累计转入", "现在的余额", "差额"]}
+                    rows={(finance?.destinations ?? []).map((row) => [
+                      places[row.destination] ?? row.destination,
+                      sortable(money(row.moved_usd), row.moved_usd),
+                      row.held_usd == null ? "已花掉" : sortable(money(row.held_usd), row.held_usd),
+                      row.difference_usd == null
+                        ? sortable(money("-" + row.moved_usd), -Number(row.moved_usd))
+                        : sortable(money(row.difference_usd), row.difference_usd),
+                    ])}
+                  />
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    差额是这些年在当地的开销加上那里的投资盈亏，两者从这些数字里分不开。现在的余额随汇率和行情变动。
+                  </p>
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">各年出金去向</h3>
+                  <Rows
+                    headers={["年份", ...Object.keys(places).map((key) => places[key])]}
+                    rows={[...(finance?.by_year ?? [])]
+                      .reverse()
+                      .map((row) => [
+                        row.year,
+                        ...Object.keys(places).map((key) =>
+                          row[key] ? sortable(money(row[key]), row[key]) : "—",
+                        ),
+                      ])}
+                  />
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">记一笔新的出金</h3>
+                  <div className="flex flex-wrap items-end gap-2 text-sm">
+                    <input
+                      type="date"
+                      aria-label="出金日期"
+                      value={entry.day}
+                      onChange={(event) => setEntry({ ...entry, day: event.target.value })}
+                      className="border-input bg-background h-9 rounded-md border px-2"
+                    />
+                    <input
+                      aria-label="经由"
+                      placeholder="经由（如 okx、bylls）"
+                      value={entry.place}
+                      onChange={(event) => setEntry({ ...entry, place: event.target.value })}
+                      className="border-input bg-background h-9 w-44 rounded-md border px-2"
+                    />
+                    <input
+                      aria-label="美元金额"
+                      placeholder="美元金额"
+                      inputMode="decimal"
+                      value={entry.usd}
+                      onChange={(event) => setEntry({ ...entry, usd: event.target.value })}
+                      className="border-input bg-background h-9 w-32 rounded-md border px-2"
+                    />
+                    <select
+                      aria-label="去向"
+                      value={entry.destination}
+                      onChange={(event) => setEntry({ ...entry, destination: event.target.value })}
+                      className="border-input bg-background h-9 rounded-md border px-2"
+                    >
+                      {Object.entries(places).map(([key, title]) => (
+                        <option key={key} value={key}>
+                          {title}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      disabled={!entry.day || !entry.place || !entry.usd}
+                      onClick={() => void addCashout()}
+                    >
+                      保存
+                    </Button>
+                  </div>
+                </section>
               </div>
             )}
             {tab === "资产分布" && (

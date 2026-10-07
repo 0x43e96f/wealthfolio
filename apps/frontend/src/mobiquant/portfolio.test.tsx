@@ -501,4 +501,109 @@ describe("private Portfolio", () => {
       apy: "4.2",
     });
   });
+
+  it("shows the long view and records a new cash-out", async () => {
+    const data = context();
+    const long = {
+      points: [
+        {
+          date: "2025-12-31",
+          net_usd: "1000",
+          cashout_usd: "0",
+          generated_usd: "1000",
+          source: "manual",
+        },
+        {
+          date: "2026-10-06",
+          net_usd: "1500",
+          cashout_usd: "575",
+          generated_usd: "2075",
+          source: "synced",
+        },
+      ],
+      monthly: [],
+      yearly: [
+        {
+          period: "2025",
+          close_date: "2025-12-31",
+          close_usd: "1000",
+          cashout_usd: "0",
+          change_usd: null,
+          result_usd: null,
+          basis_changed: false,
+        },
+        {
+          period: "2026",
+          close_date: "2026-10-06",
+          close_usd: "1500",
+          cashout_usd: "575",
+          change_usd: "500",
+          result_usd: "1075",
+          basis_changed: true,
+        },
+      ],
+      destinations: [
+        {
+          destination: "china",
+          moved_usd: "500",
+          share: "0.8696",
+          held_usd: "350",
+          difference_usd: "-150",
+          places: [{ place: "okx", usd: "500" }],
+        },
+        {
+          destination: "card",
+          moved_usd: "75",
+          share: "0.1304",
+          held_usd: null,
+          difference_usd: null,
+          places: [{ place: "bitget", usd: "75" }],
+        },
+      ],
+      by_year: [{ year: "2026", china: "500", card: "75" }],
+      cashout_total_usd: "575",
+      kept_usd: "350",
+      note: "历史为手工记录。",
+    };
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, method: init?.method, body: init?.body as string });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.endsWith("finance")
+                  ? long
+                  : url.endsWith("cashouts")
+                    ? { ok: true }
+                    : data,
+            ),
+            { status: url.endsWith("cashouts") ? 201 : 200 },
+          ),
+        );
+      }),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "财务全景" }));
+    // The year that spans the switch from hand-kept to synced figures is marked.
+    expect(await screen.findByText("$1,075.00 *")).toBeTruthy();
+    expect(screen.getByText("$2,075.00")).toBeTruthy();
+    expect(screen.getByText("已花掉")).toBeTruthy();
+    expect(screen.getByText("-$150.00")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("出金日期"), { target: { value: "2026-10-07" } });
+    fireEvent.change(screen.getByLabelText("经由"), { target: { value: "bylls" } });
+    fireEvent.change(screen.getByLabelText("美元金额"), { target: { value: "1,200" } });
+    fireEvent.change(screen.getByLabelText("去向"), { target: { value: "canada" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(calls.some((call) => call.method === "POST")).toBe(true));
+    expect(JSON.parse(calls.find((call) => call.method === "POST")!.body!)).toEqual({
+      day: "2026-10-07",
+      place: "bylls",
+      usd: "1200",
+      destination: "canada",
+    });
+  });
 });

@@ -43,6 +43,53 @@ export interface TradeSummary {
   basis: "source" | "computed" | "incomplete";
   opening_position?: string | null;
 }
+export interface Period {
+  period: string;
+  close_date: string;
+  close_usd: string;
+  cashout_usd: string;
+  change_usd: string | null;
+  result_usd: string | null;
+  basis_changed: boolean;
+}
+export interface Finance {
+  points: {
+    date: string;
+    net_usd: string;
+    cashout_usd: string;
+    generated_usd: string;
+    source: "manual" | "synced";
+  }[];
+  monthly: Period[];
+  yearly: Period[];
+  destinations: {
+    destination: string;
+    moved_usd: string;
+    share: string | null;
+    held_usd: string | null;
+    difference_usd: string | null;
+    places: { place: string; usd: string }[];
+  }[];
+  by_year: ({ year: string } & Record<string, string>)[];
+  cashout_total_usd: string;
+  kept_usd: string;
+  note: string;
+}
+// Record money taken out of crypto: when, through what, how much, to where.
+export async function saveCashout(body: {
+  day: string;
+  place: string;
+  usd: string;
+  destination: string;
+}): Promise<void> {
+  const response = await fetch("api/assets/cashouts", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error("日期、金额或去向不对");
+}
 export interface YieldRow {
   connection_id: string;
   account: string;
@@ -262,7 +309,8 @@ export async function readAsset<T>(
     | "history"
     | `history?interval=${"1h" | "4h" | "1d" | "1M"}`
     | "trades?days=365"
-    | "yields",
+    | "yields"
+    | "finance",
   signal: AbortSignal,
 ): Promise<T> {
   // Relative on purpose: the page carries a <base> for the path it is mounted under.
