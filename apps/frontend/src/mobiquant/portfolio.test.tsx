@@ -180,6 +180,16 @@ describe("private Portfolio", () => {
     expect(screen.getByRole("img", { name: "币种占比" })).toBeTruthy();
     fireEvent.mouseEnter(screen.getByRole("button", { name: /港元资产/ }));
     expect(screen.getByText(/股票与证券合计 · \$300\.00/)).toBeTruthy();
+    // A click holds the slice: passing over another on the way to the list
+    // changes nothing, and leaving the chart does not clear it.
+    fireEvent.click(screen.getByRole("button", { name: /港元资产/ }));
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /加密货币/ }));
+    fireEvent.mouseLeave(screen.getByRole("img", { name: "币种占比" }).parentElement!);
+    expect(screen.getByText(/股票与证券合计 · \$300\.00/)).toBeTruthy();
+    expect(screen.getByText(/已固定/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /港元资产/ }));
+    expect(screen.queryByText(/已固定/)).toBeNull();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /港元资产/ }));
     expect(screen.getByText(/1 A · \$300\.00/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "按平台" }));
     expect(screen.getAllByText("Binance · 1 个账户").length).toBeGreaterThan(0);

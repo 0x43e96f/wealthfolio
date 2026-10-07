@@ -374,6 +374,10 @@ function Pie({
   label: string;
 }) {
   const [over, setOver] = useState<string | null>(null);
+  // Clicking a slice holds it, so the pointer can cross other slices on its way
+  // to the list without changing what is shown; clicking it again lets go.
+  const [held, setHeld] = useState<string | null>(null);
+  const hold = (name: string) => setHeld((current) => (current === name ? null : name));
   let turned = 0;
   const arcs = rows
     .filter((row) => Number(row.share ?? 0) > 0)
@@ -394,7 +398,8 @@ function Pie({
       };
     });
   if (!arcs.length) return <p className="text-muted-foreground text-sm">暂无数据。</p>;
-  const current = arcs.find((arc) => arc.label === over);
+  const shown = held ?? over;
+  const current = arcs.find((arc) => arc.label === shown);
   return (
     <div
       className="grid items-start gap-8 md:grid-cols-[14rem_minmax(0,22rem)_minmax(0,1fr)]"
@@ -408,9 +413,10 @@ function Pie({
             fill={arc.color}
             stroke="white"
             strokeWidth="1"
-            opacity={over && over !== arc.label ? 0.35 : 1}
+            opacity={shown && shown !== arc.label ? 0.35 : 1}
+            className="cursor-pointer"
             onMouseEnter={() => setOver(arc.label)}
-            onClick={() => setOver(arc.label)}
+            onClick={() => hold(arc.label)}
           >
             <title>{arc.label}</title>
           </path>
@@ -423,11 +429,12 @@ function Pie({
               type="button"
               className={
                 "flex items-center gap-2 rounded px-1 text-left " +
-                (over === arc.label ? "bg-muted" : "")
+                (shown === arc.label ? "bg-muted" : "")
               }
+              aria-pressed={held === arc.label}
               onMouseEnter={() => setOver(arc.label)}
               onFocus={() => setOver(arc.label)}
-              onClick={() => setOver(arc.label)}
+              onClick={() => hold(arc.label)}
             >
               <span className="inline-block size-3 rounded-sm" style={{ background: arc.color }} />
               <span className="w-28">{arc.label}</span>
@@ -444,6 +451,9 @@ function Pie({
           <>
             <p className="mb-2 font-medium">
               {current.label} · {percent(current.share)} · {current.value}
+              <span className="text-muted-foreground ml-2 text-xs font-normal">
+                {held === current.label ? "已固定 · 再点一次取消" : "点击可固定"}
+              </span>
             </p>
             <ul className="space-y-1">
               {current.detail.map((item) => (
@@ -454,7 +464,9 @@ function Pie({
             </ul>
           </>
         ) : (
-          <p className="text-muted-foreground">把鼠标移到某一块或某一行上，查看它包含什么。</p>
+          <p className="text-muted-foreground">
+            把鼠标移到某一块或某一行上查看它包含什么；点击可以固定住，再慢慢看右边的明细。
+          </p>
         )}
       </div>
     </div>
