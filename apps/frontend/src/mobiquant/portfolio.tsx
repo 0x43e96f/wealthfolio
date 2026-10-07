@@ -48,7 +48,20 @@ const tabs = [
 const units = ["USD", "CAD", "CNY", "HKD"] as const;
 const classOrder = ["stablecoin", "cash", "fund", "securities", "major", "altcoin"];
 const classRank = (name: string) => classOrder.indexOf(name) + 1 || classOrder.length + 1;
-const slices = ["#2563eb", "#16a34a", "#f59e0b", "#9333ea", "#dc2626", "#0891b2", "#64748b"];
+const slices = [
+  "#2563eb",
+  "#16a34a",
+  "#f59e0b",
+  "#9333ea",
+  "#dc2626",
+  "#0891b2",
+  "#db2777",
+  "#65a30d",
+  "#ea580c",
+  "#4f46e5",
+  "#0d9488",
+  "#64748b",
+];
 const classes: Record<string, string> = {
   stablecoin: "稳定币",
   major: "主流币",
@@ -535,6 +548,37 @@ export function Portfolio() {
   // By size, not sign: a short position or a margin loan is negative and matters.
   const small = (value: string | null | undefined) => value == null || Math.abs(Number(value)) < 10;
   const merged = allocation?.by_asset ?? [];
+  // Each asset's share of everything valued, across all accounts: the largest
+  // eleven on their own and the rest together. Pointing at one lists where it sits.
+  const ranked = [...merged]
+    .filter((row) => !small(row.usd))
+    .sort((a, b) => Number(b.usd) - Number(a.usd));
+  const rest = ranked.slice(11);
+  const assetSlices = [
+    ...ranked.slice(0, 11).map((row) => ({
+      label: row.symbol,
+      value: money(row.usd),
+      share: row.share,
+      detail: [...row.sources]
+        .sort((a, b) => Number(b.usd ?? 0) - Number(a.usd ?? 0))
+        .map((source) => `${privateText(source.account)} · ${money(source.usd)}`),
+    })),
+    ...(rest.length
+      ? [
+          {
+            label: `其他 ${rest.length} 项`,
+            value: money(String(rest.reduce((sum, row) => sum + Number(row.usd), 0).toFixed(2))),
+            share: String(rest.reduce((sum, row) => sum + Number(row.share ?? 0), 0)),
+            detail: [
+              ...rest
+                .slice(0, 12)
+                .map((row) => `${row.symbol} · ${money(row.usd)} · ${percent(row.share)}`),
+              ...(rest.length > 12 ? [`…… 另有 ${rest.length - 12} 项`] : []),
+            ],
+          },
+        ]
+      : []),
+  ];
   const smallCount =
     tab === "资产分布"
       ? merged.filter((row) => small(row.usd)).length
@@ -917,6 +961,9 @@ export function Portfolio() {
                 {split === "合并" && (
                   <section>
                     <h3 className="mb-3 text-sm font-medium">跨账户合并持仓</h3>
+                    <div className="mb-6">
+                      <Pie label="各资产占比" rows={assetSlices} />
+                    </div>
                     <Rows
                       search="搜索资产"
                       pick={{ column: 1, label: "大类" }}

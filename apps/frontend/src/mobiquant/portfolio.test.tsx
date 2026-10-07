@@ -165,6 +165,10 @@ describe("private Portfolio", () => {
     fireEvent.mouseEnter(screen.getByRole("button", { name: /Binance · 1 个账户/ }));
     expect(screen.getByText(/My Binance · \$123\.45/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "跨账户合并持仓" }));
+    // The merged view leads with each asset's share and where it is held.
+    expect(screen.getByRole("img", { name: "各资产占比" })).toBeTruthy();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /^BTC/ }));
+    expect(screen.getByText(/My Binance · \$123\.45/)).toBeTruthy();
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索资产" }), {
       target: { value: "eth" },
     });
