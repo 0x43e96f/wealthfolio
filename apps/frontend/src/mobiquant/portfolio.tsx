@@ -724,8 +724,8 @@ export function Portfolio() {
                   <>
                     <p className="text-muted-foreground mb-4 text-sm">
                       近一年内每个账户、每个标的的买卖与已实现盈亏，金额以该标的的计价币种表示。
-                      标“平台”的盈亏是平台自己给出的数字；标“推算”的是按均价成本从这段成交里算的，
-                      若此前已有持仓则不准。
+                      标“平台”的盈亏是平台自己给出的数字；标“推算”的是按均价成本从这段成交里算出的；
+                      标“不完整”表示这段成交之前就已有持仓（按现持仓倒推），那部分成本未知，数字仅供参考。
                     </p>
                     <Rows
                       headers={[
@@ -746,7 +746,13 @@ export function Portfolio() {
                         `${privateText(plain(row.net_position))} @ ${plain(row.average_cost)}`,
                         hidden
                           ? "••••"
-                          : `${amount(row.realized, row.quote)}（${row.basis === "source" ? "平台" : "推算"}）`,
+                          : `${amount(row.realized, row.quote)}（${
+                              row.basis === "source"
+                                ? "平台"
+                                : row.basis === "computed"
+                                  ? "推算"
+                                  : `不完整，期初约 ${plain(row.opening_position)}`
+                            }）`,
                         privateText(plain(row.fees)),
                         `${date(row.first).slice(0, 10)} – ${date(row.last).slice(0, 10)}`,
                       ])}

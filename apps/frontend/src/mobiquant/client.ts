@@ -40,7 +40,8 @@ export interface TradeSummary {
   average_cost: string | null;
   fees: string;
   realized: string;
-  basis: "source" | "computed";
+  basis: "source" | "computed" | "incomplete";
+  opening_position?: string | null;
 }
 export interface Trades {
   fills: Fill[];
