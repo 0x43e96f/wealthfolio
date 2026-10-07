@@ -31,6 +31,8 @@ import {
   type LedgerStatus,
   plain,
   type Trades,
+  saveYield,
+  type Yields,
 } from "./client";
 
 const tabs = [
@@ -39,6 +41,7 @@ const tabs = [
   "资产分布",
   "持仓明细",
   "衍生品",
+  "收益",
   "交易流水",
   "待处理事项",
 ] as const;
@@ -205,7 +208,7 @@ function Trend({
   );
 }
 // A cell is its text, or text with the value it sorts by when the two differ.
-type Cell = string | null | undefined | { text: string; sort: number | string };
+type Cell = string | null | undefined | { text: string; sort: number | string; act?: () => void };
 const sortable = (text: string, value: string | number | null | undefined): Cell => ({
   text,
   sort: Number(value ?? 0) || 0,
@@ -310,7 +313,13 @@ function Rows({
               <tr key={index} className="border-b last:border-0">
                 {row.map((cell, column) => (
                   <td key={column} className="whitespace-nowrap px-4 py-3">
-                    {text(cell)}
+                    {cell != null && typeof cell === "object" && cell.act ? (
+                      <button type="button" className="underline" onClick={cell.act}>
+                        {cell.text}
+                      </button>
+                    ) : (
+                      text(cell)
+                    )}
                   </td>
                 ))}
               </tr>
@@ -429,6 +438,7 @@ export function Portfolio() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [opened, setOpened] = useState<string | null>(null);
   const [trades, setTrades] = useState<Trades | null>(null);
+  const [yields, setYields] = useState<Yields | null>(null);
   const [flow, setFlow] = useState<"汇总" | "成交" | "资金">("汇总");
   const [unit, setUnit] = useState<(typeof units)[number]>("USD");
   const [split, setSplit] = useState<"大类" | "平台" | "合并">("大类");
@@ -446,13 +456,14 @@ export function Portfolio() {
     setBusy(true);
     setError("");
     try {
-      const [data, status, past, deals] = await Promise.all([
+      const [data, status, past, deals, income] = await Promise.all([
         readAsset<Context>("context", current.signal),
         readAsset<LedgerStatus>("wealthfolio/status", current.signal).catch(() => ({
           available: false,
         })),
         readAsset<History>("history", current.signal).catch(() => null),
         readAsset<Trades>("trades?days=365", current.signal).catch(() => null),
+        readAsset<Yields>("yields", current.signal).catch(() => null),
       ]);
       if (current.signal.aborted) return;
       if (!Array.isArray(data.overview?.accounts) || !Array.isArray(data.recent_events))
@@ -461,6 +472,7 @@ export function Portfolio() {
       setLedger(status);
       if (past && Array.isArray(past.points)) setHistory(past);
       if (deals && Array.isArray(deals.fills)) setTrades(deals);
+      if (income && Array.isArray(income.rows)) setYields(income);
     } catch {
       if (controller.current === current)
         setError("刷新失败。保留上次显示的数据，请检查同步状态并稍后重试。");
@@ -477,7 +489,11 @@ export function Portfolio() {
   }, [refresh]);
   const accounts = context ? ownedAccounts(context) : [];
   const holdings = accounts.flatMap((account) =>
-    (account.snapshot?.holdings ?? []).map((holding) => ({ ...holding, account: account.label })),
+    (account.snapshot?.holdings ?? []).map((holding) => ({
+      ...holding,
+      account: account.label,
+      connection: account.id,
+    })),
   );
   const positions = accounts.flatMap((account) =>
     (account.snapshot?.positions ?? []).map((position) => ({
@@ -490,6 +506,20 @@ export function Portfolio() {
   for (const holding of holdings)
     totals.set(holding.symbol, (totals.get(holding.symbol) ?? 0) + Number(holding.usd_value ?? 0));
   const options = holdings.filter((holding) => holding.scope === "opt");
+  const editYield = async (connection: string, asset: string, current?: string) => {
+    const answer = window.prompt(
+      `${asset} 的年化（%）。留空并确定 = 清除手填的年化。`,
+      current ?? "",
+    );
+    if (answer === null) return;
+    const rate = answer.trim().replace("%", "");
+    try {
+      await saveYield(connection, asset, rate === "" ? null : rate);
+      await refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "保存失败");
+    }
+  };
   const allocation = context?.allocation;
   const exposure = context?.exposure;
   const trend = history?.points ?? [];
@@ -1038,7 +1068,7 @@ export function Portfolio() {
                 <Rows
                   search="搜索资产或账户"
                   pick={{ column: 1, label: "账户" }}
-                  headers={["资产", "账户", "数量", "估值", "账户范围"]}
+                  headers={["资产", "账户", "数量", "估值", "账户范围", ""]}
                   rows={[...holdings]
                     .filter((holding) => dust || !small(holding.usd_value))
                     .sort(
@@ -1053,6 +1083,11 @@ export function Portfolio() {
                       sortable(privateText(plain(holding.quantity)), holding.quantity),
                       sortable(money(holding.usd_value), holding.usd_value),
                       holding.scope,
+                      {
+                        text: "年化",
+                        sort: 0,
+                        act: () => void editYield(holding.connection, holding.symbol),
+                      },
                     ])}
                 />
                 {dustToggle}
@@ -1105,6 +1140,72 @@ export function Portfolio() {
                   ]}
                 />
               </>
+            )}
+            {tab === "收益" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+                  {(
+                    [
+                      ["生息资产", money(yields?.earning_usd)],
+                      ["加权年化", yields?.weighted_apy ? `${yields.weighted_apy}%` : "—"],
+                      ["预计月收益", money(yields?.monthly_usd)],
+                      ["预计年收益", money(yields?.yearly_usd)],
+                      ["未生息的现金与稳定币", money(yields?.idle_usd)],
+                    ] as const
+                  ).map(([title, value]) => (
+                    <div key={title}>
+                      <p className="text-muted-foreground text-xs">{title}</p>
+                      <p className="text-xl font-semibold tabular-nums">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-muted-foreground text-sm">
+                  收益是按当前市值和年化估算的，不是实际到账。年化标“平台”的是平台自己给出的利率，随同步更新；
+                  标“手填”的是你填的，以你填的为准，清空后恢复为平台利率。
+                </p>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">生息中</h3>
+                  <Rows
+                    search="搜索资产或账户"
+                    headers={["资产", "账户", "市值", "年化", "来源", "预计月收益", "更新日期", ""]}
+                    rows={(yields?.rows ?? []).map((row) => [
+                      row.asset,
+                      privateText(row.account),
+                      sortable(money(row.usd), row.usd),
+                      sortable(`${row.apy}%`, row.apy),
+                      row.source === "manual" ? "手填" : "平台",
+                      sortable(money(row.monthly_usd), row.monthly_usd),
+                      row.updated_at ? date(row.updated_at).slice(0, 10) : "随同步",
+                      {
+                        text: "修改",
+                        sort: 0,
+                        act: () => void editYield(row.connection_id, row.asset, row.apy),
+                      },
+                    ])}
+                  />
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">还没有年化的现金、稳定币、基金与债券</h3>
+                  <Rows
+                    search="搜索资产或账户"
+                    headers={["资产", "账户", "大类", "市值", ""]}
+                    rows={(yields?.unset ?? []).map((row) => [
+                      row.asset,
+                      privateText(row.account),
+                      classes[row.class] ?? row.class,
+                      sortable(money(row.usd), row.usd),
+                      {
+                        text: "设置年化",
+                        sort: 0,
+                        act: () => void editYield(row.connection_id, row.asset),
+                      },
+                    ])}
+                  />
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    其他持仓（比如某只股票的股息率）也可以设置：到“持仓明细”找到它，点该行的“年化”。
+                  </p>
+                </section>
+              </div>
             )}
             {tab === "交易流水" && (
               <>

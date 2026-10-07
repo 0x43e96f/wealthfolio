@@ -43,6 +43,41 @@ export interface TradeSummary {
   basis: "source" | "computed" | "incomplete";
   opening_position?: string | null;
 }
+export interface YieldRow {
+  connection_id: string;
+  account: string;
+  asset: string;
+  scope: string;
+  class: string;
+  usd: string;
+  apy?: string;
+  source?: "manual" | "auto";
+  updated_at?: string | null;
+  monthly_usd?: string;
+}
+export interface Yields {
+  rows: YieldRow[];
+  unset: YieldRow[];
+  earning_usd: string;
+  weighted_apy: string | null;
+  monthly_usd: string;
+  yearly_usd: string;
+  idle_usd: string;
+}
+// Enter, change or (with null) clear the yearly rate of one holding.
+export async function saveYield(
+  connection_id: string,
+  asset: string,
+  apy: string | null,
+): Promise<void> {
+  const response = await fetch("api/assets/yields", {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connection_id, asset, apy }),
+  });
+  if (!response.ok) throw new Error("年化需为 0–1000 之间的数字");
+}
 export interface Trades {
   fills: Fill[];
   total: number;
@@ -214,7 +249,7 @@ export function ownedAccounts(context: Context): Account[] {
 }
 
 export async function readAsset<T>(
-  path: "context" | "wealthfolio/status" | "history" | "trades?days=365",
+  path: "context" | "wealthfolio/status" | "history" | "trades?days=365" | "yields",
   signal: AbortSignal,
 ): Promise<T> {
   // Relative on purpose: the page carries a <base> for the path it is mounted under.

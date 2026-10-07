@@ -388,4 +388,73 @@ describe("private Portfolio", () => {
     expect(screen.getByText("2026-10-06 收盘")).toBeTruthy();
     expect(screen.getAllByText("2026-10-05").length).toBeGreaterThan(0);
   });
+
+  it("lists what earns interest and saves a rate the owner enters", async () => {
+    const data = context();
+    const income = {
+      rows: [
+        {
+          connection_id: "owned",
+          account: "My Binance",
+          asset: "USDC",
+          scope: "spot",
+          class: "stablecoin",
+          usd: "1200",
+          apy: "5.00",
+          source: "auto",
+          updated_at: null,
+          monthly_usd: "5.00",
+        },
+      ],
+      unset: [
+        {
+          connection_id: "owned",
+          account: "My Binance",
+          asset: "USDT",
+          scope: "spot",
+          class: "stablecoin",
+          usd: "300",
+        },
+      ],
+      earning_usd: "1200",
+      weighted_apy: "5.00",
+      monthly_usd: "5.00",
+      yearly_usd: "60.00",
+      idle_usd: "300",
+    };
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, method: init?.method, body: init?.body as string });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.endsWith("yields")
+                  ? init?.method === "PUT"
+                    ? { ok: true }
+                    : income
+                  : data,
+            ),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+    vi.stubGlobal("prompt", () => " 4.2% ");
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "收益" }));
+    expect((await screen.findAllByText("5.00%")).length).toBe(2);
+    expect(screen.getByText("平台")).toBeTruthy();
+    expect(screen.getByText("$60.00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "设置年化" }));
+    await waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
+    expect(JSON.parse(calls.find((call) => call.method === "PUT")!.body!)).toEqual({
+      connection_id: "owned",
+      asset: "USDT",
+      apy: "4.2",
+    });
+  });
 });
