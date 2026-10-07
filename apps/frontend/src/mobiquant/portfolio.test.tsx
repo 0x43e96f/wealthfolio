@@ -364,7 +364,7 @@ describe("private Portfolio", () => {
             JSON.stringify(
               url.endsWith("wealthfolio/status")
                 ? { available: false }
-                : url.endsWith("history")
+                : url.includes("history")
                   ? past
                   : data,
             ),
@@ -390,6 +390,15 @@ describe("private Portfolio", () => {
     expect(screen.getByText("2026-10-05 收盘")).toBeTruthy();
     fireEvent.mouseLeave(chart);
     expect(screen.getByText("2026-10-06 收盘")).toBeTruthy();
+    // Other bar sizes are read on request, from the same endpoint.
+    fireEvent.click(screen.getByRole("button", { name: "1 小时" }));
+    await waitFor(() =>
+      expect(
+        (fetch as unknown as { mock: { calls: [string][] } }).mock.calls.some(([url]) =>
+          url.endsWith("history?interval=1h"),
+        ),
+      ).toBe(true),
+    );
     expect(screen.getAllByText("2026-10-05").length).toBeGreaterThan(0);
   });
 

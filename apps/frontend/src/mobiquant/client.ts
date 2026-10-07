@@ -249,7 +249,13 @@ export function ownedAccounts(context: Context): Account[] {
 }
 
 export async function readAsset<T>(
-  path: "context" | "wealthfolio/status" | "history" | "trades?days=365" | "yields",
+  path:
+    | "context"
+    | "wealthfolio/status"
+    | "history"
+    | `history?interval=${"1h" | "4h" | "1d" | "1M"}`
+    | "trades?days=365"
+    | "yields",
   signal: AbortSignal,
 ): Promise<T> {
   // Relative on purpose: the page carries a <base> for the path it is mounted under.

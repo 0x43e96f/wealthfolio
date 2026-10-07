@@ -46,6 +46,12 @@ const tabs = [
   "待处理事项",
 ] as const;
 const units = ["USD", "CAD", "CNY", "HKD"] as const;
+const bars = [
+  ["1h", "1 小时"],
+  ["4h", "4 小时"],
+  ["1d", "日"],
+  ["1M", "月"],
+] as const;
 const classOrder = ["stablecoin", "cash", "fund", "securities", "major", "altcoin"];
 const classRank = (name: string) => classOrder.indexOf(name) + 1 || classOrder.length + 1;
 const slices = [
@@ -452,6 +458,23 @@ export function Portfolio() {
   const [opened, setOpened] = useState<string | null>(null);
   const [trades, setTrades] = useState<Trades | null>(null);
   const [yields, setYields] = useState<Yields | null>(null);
+  const [bar, setBar] = useState<(typeof bars)[number][0]>("1d");
+  const [curve, setCurve] = useState<History | null>(null);
+  // The curve's own reading, at whichever bar size is chosen. The daily series
+  // loaded with the page already serves the daily view.
+  useEffect(() => {
+    if (bar === "1d") {
+      setCurve(null);
+      return;
+    }
+    const current = new AbortController();
+    readAsset<History>(`history?interval=${bar}`, current.signal)
+      .then((found) => {
+        if (Array.isArray(found.points)) setCurve(found);
+      })
+      .catch(() => undefined);
+    return () => current.abort();
+  }, [bar, context?.overview.as_of]);
   const [flow, setFlow] = useState<"汇总" | "成交" | "资金">("汇总");
   const [unit, setUnit] = useState<(typeof units)[number]>("USD");
   const [split, setSplit] = useState<"大类" | "平台" | "合并">("大类");
@@ -537,6 +560,7 @@ export function Portfolio() {
   const exposure = context?.exposure;
   const trend = history?.points ?? [];
   const today = trend[trend.length - 1];
+  const plotted = bar === "1d" ? trend : (curve?.points ?? []);
   const observation = (item: NonNullable<typeof allocation>["observations"][number]) =>
     item.kind === "platform_concentration"
       ? `${providers[item.subject ?? ""] ?? item.subject} 占已知净资产 ${percent(item.share)}，单一平台占比过半。`
@@ -885,10 +909,22 @@ export function Portfolio() {
                   {history?.note}
                   新接入账户的那一天不计算涨跌。
                 </p>
-                {trend.length > 0 && !hidden && <Trend points={trend} money={money} />}
+                <div className="flex flex-wrap gap-2">
+                  {bars.map(([value, title]) => (
+                    <Button
+                      key={value}
+                      size="sm"
+                      variant={bar === value ? "default" : "outline"}
+                      onClick={() => setBar(value)}
+                    >
+                      {title}
+                    </Button>
+                  ))}
+                </div>
+                {plotted.length > 0 && !hidden && <Trend points={plotted} money={money} />}
                 <Rows
-                  headers={["日期", "净资产", "较前一日", "涨跌幅", "计入账户"]}
-                  rows={[...trend]
+                  headers={["时间", "净资产", "较前一期", "涨跌幅", "计入账户"]}
+                  rows={[...plotted]
                     .reverse()
                     .map((point) => [
                       point.date,
