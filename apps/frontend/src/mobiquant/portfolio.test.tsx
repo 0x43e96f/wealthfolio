@@ -155,10 +155,15 @@ describe("private Portfolio", () => {
     expect(await screen.findByText(/BTC 占已估值持仓 100.00%/)).toBeTruthy();
     // One view at a time: the pie by category first, the others on request.
     expect(screen.getByRole("img", { name: "资产大类占比" })).toBeTruthy();
+    // Pointing at a category lists what is in it.
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /主流币/ }));
+    expect(screen.getByText(/BTC · \$123\.45/)).toBeTruthy();
     expect(screen.getAllByText("主流币").length).toBeGreaterThan(0);
     expect(screen.queryByText("Binance · 1 个账户")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "按平台" }));
-    expect(screen.getByText("Binance · 1 个账户")).toBeTruthy();
+    expect(screen.getAllByText("Binance · 1 个账户").length).toBeGreaterThan(0);
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /Binance · 1 个账户/ }));
+    expect(screen.getByText(/My Binance · \$123\.45/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "跨账户合并持仓" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索资产" }), {
       target: { value: "eth" },
@@ -365,13 +370,22 @@ describe("private Portfolio", () => {
       ),
     );
     render(<Portfolio />);
-    fireEvent.click(await screen.findByRole("button", { name: "CAD" }));
+    fireEvent.change(await screen.findByRole("combobox", { name: "计价币种" }), {
+      target: { value: "CAD" },
+    });
     expect(await screen.findByText("175.47 CAD")).toBeTruthy();
     expect(screen.getByText("1 USD = 1.4214 CAD")).toBeTruthy();
     // Today's change against yesterday's close heads the page.
     expect(screen.getAllByText("$23.45").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "资产曲线" }));
     expect(await screen.findByText("23.45%")).toBeTruthy();
-    expect(screen.getByText("2026-10-05")).toBeTruthy();
+    // The reading follows the pointer: the left edge is the first day.
+    const chart = screen.getAllByRole("img", { name: "净资产历史曲线" })[0];
+    chart.getBoundingClientRect = () => ({ left: 0, width: 800 }) as DOMRect;
+    fireEvent.mouseMove(chart, { clientX: 0 });
+    expect(screen.getByText("2026-10-05 收盘")).toBeTruthy();
+    fireEvent.mouseLeave(chart);
+    expect(screen.getByText("2026-10-06 收盘")).toBeTruthy();
+    expect(screen.getAllByText("2026-10-05").length).toBeGreaterThan(0);
   });
 });

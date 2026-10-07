@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as PointerMove,
+  type TouchEvent as FingerMove,
+} from "react";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
 import {
@@ -32,7 +40,7 @@ const tabs = [
   "持仓明细",
   "衍生品",
   "交易流水",
-  "每日对账",
+  "待处理事项",
 ] as const;
 const units = ["USD", "CAD", "CNY", "HKD"] as const;
 const classOrder = ["stablecoin", "cash", "fund", "securities", "major", "altcoin"];
@@ -92,51 +100,108 @@ function date(value: string | undefined) {
   return value ? new Date(value).toLocaleString("zh-CN") : "尚未同步";
 }
 
-function Bars({ rows }: { rows: { label: string; value: string; share: string | null }[] }) {
-  if (!rows.length) return <p className="text-muted-foreground text-sm">暂无数据。</p>;
-  return (
-    <ul className="space-y-3">
-      {rows.map((row) => (
-        <li key={row.label}>
-          <div className="mb-1 flex justify-between gap-4 text-sm">
-            <span>{row.label}</span>
-            <span className="text-muted-foreground tabular-nums">
-              {row.value} · {percent(row.share)}
-            </span>
-          </div>
-          <div className="bg-muted h-2 overflow-hidden rounded-full">
-            <div
-              className="bg-primary h-full rounded-full"
-              style={{ width: `${Math.min(100, Math.max(0, Number(row.share ?? 0) * 100))}%` }}
-            />
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-// Geometry only: the labels beside the line are formatted from the exact strings.
-function Trend({ points }: { points: History["points"] }) {
+// An exchange-style balance curve: one point per day's close, a filled area, and
+// a reading for whichever day the pointer is over. Geometry uses floats; every
+// figure shown is formatted from the exact strings.
+function Trend({
+  points,
+  money,
+}: {
+  points: History["points"];
+  money: (value: string | null | undefined) => string;
+}) {
+  const [at, setAt] = useState<number | null>(null);
+  const width = 800;
+  const height = 260;
+  const pad = 8;
   const values = points.map((point) => Number(point.net_usd));
   const low = Math.min(...values);
-  const span = Math.max(...values) - low || 1;
-  const step = points.length > 1 ? 600 / (points.length - 1) : 0;
-  const line = values
-    .map(
-      (value, index) =>
-        `${(index * step).toFixed(1)},${(110 - ((value - low) / span) * 100).toFixed(1)}`,
-    )
-    .join(" ");
+  const high = Math.max(...values);
+  const span = high - low || Math.abs(high) || 1;
+  const floor = high === low ? low - span / 2 : low - span * 0.1;
+  const top = high === low ? high + span / 2 : high + span * 0.1;
+  const x = (index: number) =>
+    points.length > 1 ? pad + (index * (width - 2 * pad)) / (points.length - 1) : width / 2;
+  const y = (value: number) =>
+    height - pad - ((value - floor) / (top - floor)) * (height - 2 * pad);
+  const line = values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`);
+  const shown = at ?? points.length - 1;
+  const point = points[shown];
+  const move = (event: PointerMove<SVGSVGElement> | FingerMove<SVGSVGElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const clientX = "touches" in event ? event.touches[0]?.clientX : event.clientX;
+    if (clientX == null || !box.width) return;
+    const ratio = Math.min(1, Math.max(0, (clientX - box.left) / box.width));
+    setAt(Math.round(ratio * (points.length - 1)));
+  };
   return (
-    <svg viewBox="0 0 600 120" className="h-32 w-full" role="img" aria-label="净资产历史曲线">
-      <polyline
-        points={line}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+    <div>
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <span className="text-2xl font-semibold tabular-nums">{money(point.net_usd)}</span>
+        <span className="text-muted-foreground text-sm">{point.date} 收盘</span>
+        {point.change_usd != null && (
+          <span
+            className={
+              "text-sm tabular-nums " +
+              (point.change_usd.startsWith("-") ? "text-red-600" : "text-green-600")
+            }
+          >
+            {point.change_usd.startsWith("-") ? "" : "+"}
+            {money(point.change_usd)}
+            {point.change_pct != null ? `（${point.change_pct}%）` : ""}
+          </span>
+        )}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-64 w-full cursor-crosshair touch-none"
+        role="img"
+        aria-label="净资产历史曲线"
+        onMouseMove={move}
+        onTouchMove={move}
+        onMouseLeave={() => setAt(null)}
+      >
+        <defs>
+          <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {points.length > 1 && (
+          <>
+            <polygon
+              points={`${x(0).toFixed(1)},${height - pad} ${line.join(" ")} ${x(points.length - 1).toFixed(1)},${height - pad}`}
+              fill="url(#trend-fill)"
+            />
+            <polyline
+              points={line.join(" ")}
+              fill="none"
+              stroke="#2563eb"
+              strokeWidth="2"
+              vectorEffect="non-scaling-stroke"
+            />
+          </>
+        )}
+        <line
+          x1={x(shown)}
+          x2={x(shown)}
+          y1={pad}
+          y2={height - pad}
+          stroke="currentColor"
+          strokeOpacity="0.25"
+          strokeDasharray="4 4"
+        />
+        <circle cx={x(shown)} cy={y(values[shown])} r="5" fill="#2563eb" stroke="white" />
+      </svg>
+      <div className="text-muted-foreground mt-1 flex justify-between text-xs">
+        <span>{points[0].date}</span>
+        <span>
+          区间最低 {money(String(points[values.indexOf(low)].net_usd))} · 最高{" "}
+          {money(String(points[values.indexOf(high)].net_usd))}
+        </span>
+        <span>{points[points.length - 1].date}</span>
+      </div>
+    </div>
   );
 }
 // A cell is its text, or text with the value it sorts by when the two differ.
@@ -262,8 +327,16 @@ function Rows({
   );
 }
 
-// Geometry only: the legend beside it carries the exact figures.
-function Pie({ rows }: { rows: { label: string; value: string; share: string | null }[] }) {
+// Geometry only: the legend beside it carries the exact figures. Pointing at a
+// slice, or at its legend line, lists what it is made of.
+function Pie({
+  rows,
+  label,
+}: {
+  rows: { label: string; value: string; share: string | null; detail: string[] }[];
+  label: string;
+}) {
+  const [over, setOver] = useState<string | null>(null);
   let turned = 0;
   const arcs = rows
     .filter((row) => Number(row.share ?? 0) > 0)
@@ -284,23 +357,64 @@ function Pie({ rows }: { rows: { label: string; value: string; share: string | n
       };
     });
   if (!arcs.length) return <p className="text-muted-foreground text-sm">暂无数据。</p>;
+  const current = arcs.find((arc) => arc.label === over);
   return (
-    <div className="flex flex-wrap items-center gap-8">
-      <svg viewBox="0 0 200 200" className="size-56" role="img" aria-label="资产大类占比">
+    <div className="flex flex-wrap items-start gap-8" onMouseLeave={() => setOver(null)}>
+      <svg viewBox="0 0 200 200" className="size-56 shrink-0" role="img" aria-label={label}>
         {arcs.map((arc) => (
-          <path key={arc.label} d={arc.path} fill={arc.color} stroke="white" strokeWidth="1" />
+          <path
+            key={arc.label}
+            d={arc.path}
+            fill={arc.color}
+            stroke="white"
+            strokeWidth="1"
+            opacity={over && over !== arc.label ? 0.35 : 1}
+            onMouseEnter={() => setOver(arc.label)}
+            onClick={() => setOver(arc.label)}
+          >
+            <title>{arc.label}</title>
+          </path>
         ))}
       </svg>
       <ul className="space-y-2 text-sm">
         {arcs.map((arc) => (
-          <li key={arc.label} className="flex items-center gap-2">
-            <span className="inline-block size-3 rounded-sm" style={{ background: arc.color }} />
-            <span className="w-24">{arc.label}</span>
-            <span className="tabular-nums">{percent(arc.share)}</span>
-            <span className="text-muted-foreground tabular-nums">{arc.value}</span>
+          <li key={arc.label}>
+            <button
+              type="button"
+              className={
+                "flex items-center gap-2 rounded px-1 text-left " +
+                (over === arc.label ? "bg-muted" : "")
+              }
+              onMouseEnter={() => setOver(arc.label)}
+              onFocus={() => setOver(arc.label)}
+              onClick={() => setOver(arc.label)}
+            >
+              <span className="inline-block size-3 rounded-sm" style={{ background: arc.color }} />
+              <span className="w-28">{arc.label}</span>
+              <span className="w-16 tabular-nums">{percent(arc.share)}</span>
+              <span className="text-muted-foreground tabular-nums">{arc.value}</span>
+            </button>
           </li>
         ))}
       </ul>
+      <div className="border-border min-h-40 min-w-64 flex-1 rounded-lg border p-3 text-sm">
+        {current ? (
+          <>
+            <p className="mb-2 font-medium">
+              {current.label} · {percent(current.share)} · {current.value}
+            </p>
+            <ul className="space-y-1">
+              {current.detail.map((item) => (
+                <li key={item} className="tabular-nums">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p className="text-muted-foreground">把鼠标移到某一块或某一行上，查看它包含什么。</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -572,22 +686,18 @@ export function Portfolio() {
             <CardHeader>
               <CardTitle className="text-muted-foreground flex items-center justify-between text-sm font-medium">
                 <span>已知净资产</span>
-                <span className="flex gap-1">
+                <select
+                  value={unit}
+                  onChange={(event) => setUnit(event.target.value as (typeof units)[number])}
+                  aria-label="计价币种"
+                  className="border-input bg-background text-foreground h-7 rounded-md border px-2 text-xs"
+                >
                   {units.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      aria-pressed={unit === item}
-                      onClick={() => setUnit(item)}
-                      className={
-                        "rounded px-2 py-0.5 text-xs " +
-                        (unit === item ? "bg-primary text-primary-foreground" : "border")
-                      }
-                    >
+                    <option key={item} value={item}>
                       {item}
-                    </button>
+                    </option>
                   ))}
-                </span>
+                </select>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -668,7 +778,7 @@ export function Portfolio() {
                     {trend[trend.length - 1].date} · {money(trend[trend.length - 1].net_usd)}
                   </span>
                 </div>
-                {!hidden && <Trend points={trend} />}
+                {!hidden && <Trend points={trend} money={money} />}
                 <p className="text-muted-foreground mt-2 text-xs">
                   {history?.note}
                   {trend.some((point) => !point.complete) && " 部分日期尚有账户未同步，数值偏低。"}
@@ -682,7 +792,7 @@ export function Portfolio() {
                   {history?.note}
                   新接入账户的那一天不计算涨跌。
                 </p>
-                {trend.length > 1 && !hidden && <Trend points={trend} />}
+                {trend.length > 0 && !hidden && <Trend points={trend} money={money} />}
                 <Rows
                   headers={["日期", "净资产", "较前一日", "涨跌幅", "计入账户"]}
                   rows={[...trend]
@@ -727,11 +837,22 @@ export function Portfolio() {
                 {split === "平台" && (
                   <section>
                     <h3 className="mb-3 text-sm font-medium">按平台 · 已知净资产</h3>
-                    <Bars
+                    <Pie
+                      label="平台占比"
                       rows={(allocation?.by_platform ?? []).map((row) => ({
                         label: `${providers[row.provider] ?? row.provider} · ${row.accounts} 个账户`,
                         value: money(row.usd),
                         share: row.share,
+                        detail: accounts
+                          .filter((account) => account.provider === row.provider)
+                          .sort(
+                            (a, b) =>
+                              Number(b.snapshot?.net_usd ?? 0) - Number(a.snapshot?.net_usd ?? 0),
+                          )
+                          .map(
+                            (account) =>
+                              `${privateText(account.label)} · ${money(account.snapshot?.net_usd)}`,
+                          ),
                       }))}
                     />
                   </section>
@@ -740,11 +861,26 @@ export function Portfolio() {
                   <section>
                     <h3 className="mb-3 text-sm font-medium">按大类 · 已估值持仓</h3>
                     <Pie
-                      rows={(allocation?.by_class ?? []).map((row) => ({
-                        label: classes[row.class] ?? row.class,
-                        value: money(row.usd),
-                        share: row.share,
-                      }))}
+                      label="资产大类占比"
+                      rows={(allocation?.by_class ?? []).map((row) => {
+                        const members = merged
+                          .filter((item) => item.class === row.class && !small(item.usd))
+                          .sort((a, b) => Number(b.usd) - Number(a.usd));
+                        return {
+                          label: classes[row.class] ?? row.class,
+                          value: money(row.usd),
+                          share: row.share,
+                          detail: [
+                            ...members
+                              .slice(0, 12)
+                              .map(
+                                (item) =>
+                                  `${item.symbol} · ${money(item.usd)} · ${percent(item.share)}`,
+                              ),
+                            ...(members.length > 12 ? [`…… 另有 ${members.length - 12} 项`] : []),
+                          ],
+                        };
+                      })}
                     />
                   </section>
                 )}
@@ -1097,25 +1233,23 @@ export function Portfolio() {
                 )}
               </>
             )}
-            {tab === "每日对账" && (
+            {tab === "待处理事项" && (
               <div className="space-y-4">
                 <p className="text-muted-foreground text-sm">
-                  {context?.reconciliation.reason ?? "连接账户后开始积累对账基线。"}
+                  同步失败、快照过期、覆盖不完整或被排除的账户会列在这里；每天的净值变化见“资产曲线”。
                 </p>
-                <p>
-                  可比较快照的资产变化：
-                  <strong>{money(context?.reconciliation.observed_change_usd)}</strong>
-                </p>
-                <p className="text-muted-foreground text-sm">
-                  资产变化包含充值和提现，不代表投资收益。
-                </p>
-                <Rows
-                  headers={["账户", "待处理项"]}
-                  rows={(context?.overview.issues ?? []).map((issue) => [
-                    privateText(name(issue.connection_id)),
-                    issues[issue.reason] ?? "数据覆盖需要核验",
-                  ])}
-                />
+                {(context?.overview.issues ?? []).length === 0 && (
+                  <p className="py-6 text-center text-sm">所有账户同步正常，没有待处理项。</p>
+                )}
+                {(context?.overview.issues ?? []).length > 0 && (
+                  <Rows
+                    headers={["账户", "待处理项"]}
+                    rows={(context?.overview.issues ?? []).map((issue) => [
+                      privateText(name(issue.connection_id)),
+                      issues[issue.reason] ?? "数据覆盖需要核验",
+                    ])}
+                  />
+                )}
               </div>
             )}
           </CardContent>
