@@ -337,10 +337,12 @@ describe("private Portfolio", () => {
         },
       ],
     };
+    const asked: string[] = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(
+      vi.fn((url: string) => {
+        asked.push(url);
+        return Promise.resolve(
           new Response(
             JSON.stringify(
               url.endsWith("wealthfolio/status")
@@ -351,12 +353,24 @@ describe("private Portfolio", () => {
             ),
             { status: 200 },
           ),
-        ),
-      ),
+        );
+      }),
     );
+    const tradeReads = () => asked.filter((url) => url.includes("trades")).length;
     render(<Portfolio />);
-    fireEvent.click(await screen.findByRole("button", { name: "交易流水" }));
+    // A year of fills is not read with the page: only when its tab is opened.
+    const tradesTab = await screen.findByRole("button", { name: "交易流水" });
+    expect(tradeReads()).toBe(0);
+    fireEvent.click(tradesTab);
     expect(await screen.findByText("125.50 USDT（平台）")).toBeTruthy();
+    expect(tradeReads()).toBe(1);
+    // Looking at another tab and coming back does not read them again; a refresh does.
+    fireEvent.click(screen.getByRole("button", { name: "收益" }));
+    fireEvent.click(screen.getByRole("button", { name: "交易流水" }));
+    expect(await screen.findByText("125.50 USDT（平台）")).toBeTruthy();
+    expect(tradeReads()).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: /刷新/ }));
+    await waitFor(() => expect(tradeReads()).toBe(2));
     expect(screen.getByText("0.5 @ 59,749.1")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "成交明细" }));
     expect(await screen.findByText("60,000.1 USDT")).toBeTruthy();
@@ -366,6 +380,38 @@ describe("private Portfolio", () => {
     });
     expect(screen.getByText(/1 \/ 1 行/)).toBeTruthy();
     expect(screen.getByText("125.50 USDT")).toBeTruthy();
+  });
+
+  it("says so when the trades could not be read, and reads them again after a refresh", async () => {
+    const data = context();
+    let fail = true;
+    let reads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("trades")) reads += 1;
+        if (url.includes("trades") && fail)
+          return Promise.resolve(new Response("{}", { status: 502 }));
+        const body = url.endsWith("wealthfolio/status")
+          ? { available: false }
+          : url.includes("trades")
+            ? { total: 0, fills: [], summary: [] }
+            : data;
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      }),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "交易流水" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("成交没有读到");
+    // The cash movements beside them come with the page and are not held up by the trades.
+    fireEvent.click(screen.getByRole("button", { name: "资金流水" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "按标的汇总" }));
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: /刷新/ }));
+    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("shows net assets in the chosen currency and each day's change on the curve", async () => {

@@ -629,6 +629,40 @@ export function Portfolio() {
     return () => current.abort();
   }, [bar, context?.overview.as_of]);
   const [flow, setFlow] = useState<"汇总" | "成交" | "资金">("汇总");
+  // The trade ledger is a year of fills (2.7 MB of them by October 2026) and only the 交易流水 tab shows it.
+  // It was read with every opening of the page; it is read when that tab is opened, and again after each
+  // refresh while the tab is in front.
+  const [round, setRound] = useState(0); // refreshes of the page that succeeded
+  const tradesRound = useRef(0); // the refresh the trades on screen were read after
+  const [tradesBusy, setTradesBusy] = useState(false);
+  const [tradesError, setTradesError] = useState("");
+  useEffect(() => {
+    if (tab !== "交易流水" || round === 0 || tradesRound.current === round) return;
+    let left = false;
+    const current = new AbortController();
+    const timeout = window.setTimeout(() => current.abort(), 20_000);
+    setTradesBusy(true);
+    setTradesError("");
+    readAsset<Trades>("trades?days=365", current.signal)
+      .then((deals) => {
+        if (left) return;
+        if (!Array.isArray(deals.fills)) throw new Error("Invalid trades");
+        setTrades(deals);
+        tradesRound.current = round;
+      })
+      .catch(() => {
+        if (!left) setTradesError("成交没有读到，点“刷新”再试一次。");
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (!left) setTradesBusy(false);
+      });
+    return () => {
+      left = true;
+      window.clearTimeout(timeout);
+      current.abort();
+    };
+  }, [tab, round]);
   const [unit, setUnit] = useState<(typeof units)[number]>("USD");
   const [split, setSplit] = useState<"大类" | "币种" | "平台" | "合并">("大类");
   const [busy, setBusy] = useState(false);
@@ -645,13 +679,12 @@ export function Portfolio() {
     setBusy(true);
     setError("");
     try {
-      const [data, status, past, deals, income, long] = await Promise.all([
+      const [data, status, past, income, long] = await Promise.all([
         readAsset<Context>("context", current.signal),
         readAsset<LedgerStatus>("wealthfolio/status", current.signal).catch(() => ({
           available: false,
         })),
         readAsset<History>("history", current.signal).catch(() => null),
-        readAsset<Trades>("trades?days=365", current.signal).catch(() => null),
         readAsset<Yields>("yields", current.signal).catch(() => null),
         readAsset<Finance>("finance", current.signal).catch(() => null),
       ]);
@@ -661,9 +694,9 @@ export function Portfolio() {
       setContext(data);
       setLedger(status);
       if (past && Array.isArray(past.points)) setHistory(past);
-      if (deals && Array.isArray(deals.fills)) setTrades(deals);
       if (income && Array.isArray(income.rows)) setYields(income);
       if (long && Array.isArray(long.points)) setFinance(long);
+      setRound((count) => count + 1);
     } catch {
       if (controller.current === current)
         setError("刷新失败。保留上次显示的数据，请检查同步状态并稍后重试。");
@@ -1719,6 +1752,19 @@ export function Portfolio() {
                     </Button>
                   ))}
                 </div>
+                {flow !== "资金" && tradesBusy && (
+                  <p role="status" className="text-muted-foreground mb-4 text-sm">
+                    {trades ? "正在读取最新的成交…" : "正在读取近一年的成交…"}
+                  </p>
+                )}
+                {flow !== "资金" && tradesError && (
+                  <p
+                    role="alert"
+                    className="border-destructive text-destructive mb-4 rounded-lg border p-3 text-sm"
+                  >
+                    {tradesError}
+                  </p>
+                )}
                 {flow === "汇总" && (
                   <>
                     <p className="text-muted-foreground mb-4 text-sm">
