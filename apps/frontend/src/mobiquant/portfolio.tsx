@@ -346,7 +346,7 @@ function TrendView({
           strokeOpacity="0.25"
           strokeDasharray="4 4"
         />
-        <circle cx={x(shown)} cy={y(values[shown])} r="5" fill="#2563eb" stroke="white" />
+        <circle cx={x(shown)} cy={y(values[shown])} r="5" fill="#2563eb" stroke="var(--card)" />
       </svg>
       <div className="text-muted-foreground mt-1 flex justify-between text-xs">
         <span>{points[0].date}</span>
@@ -535,7 +535,7 @@ function Pie({
             key={arc.label}
             d={arc.path}
             fill={arc.color}
-            stroke="white"
+            stroke="var(--card)"
             strokeWidth="1"
             opacity={shown && shown !== arc.label ? 0.35 : 1}
             className="cursor-pointer"
