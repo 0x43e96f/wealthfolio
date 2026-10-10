@@ -718,4 +718,131 @@ describe("private Portfolio", () => {
     fireEvent.wheel(frame, { deltaY: 100, clientX: 400 });
     expect(screen.queryByText(/已放大/)).toBeNull();
   });
+
+  it("draws the page from the context and the daily curve without waiting for the rest", async () => {
+    const data = context();
+    const past = {
+      points: [
+        { date: "2026-10-05", net_usd: "100", valued_accounts: 1, complete: true },
+        {
+          date: "2026-10-06",
+          net_usd: "123.45",
+          valued_accounts: 1,
+          complete: true,
+          change_usd: "23.45",
+          change_pct: "23.45",
+        },
+      ],
+      included_accounts: 1,
+      note: "",
+    };
+    // The ledger's status, the yields and the long view are asked for and not answered yet.
+    const unanswered: (() => void)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        /wealthfolio\/status|yields|finance/.test(url)
+          ? new Promise<Response>((answer) =>
+              unanswered.push(() =>
+                answer(new Response(JSON.stringify({ available: true }), { status: 200 })),
+              ),
+            )
+          : Promise.resolve(
+              new Response(JSON.stringify(url.includes("history") ? past : data), { status: 200 }),
+            ),
+      ),
+    );
+    render(<Portfolio />);
+    await screen.findByText("My Binance");
+    expect(screen.getAllByText("$123.45").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$23.45").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Wealthfolio 账本状态读取中/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新中" })).toBeDisabled();
+    expect(unanswered).toHaveLength(3);
+    unanswered.forEach((answer) => answer());
+    expect(await screen.findByText(/Wealthfolio 账本已连接/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled());
+  });
+
+  it("shows nothing of a refresh whose context could not be read", async () => {
+    const data = context();
+    let failing = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.endsWith("wealthfolio/status"))
+          return Promise.resolve(
+            new Response(JSON.stringify({ available: !failing }), { status: 200 }),
+          );
+        if (failing && url.endsWith("context")) return Promise.reject(new Error("network failed"));
+        return Promise.resolve(new Response(JSON.stringify(data), { status: 200 }));
+      }),
+    );
+    render(<Portfolio />);
+    expect(await screen.findByText(/Wealthfolio 账本已连接/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled());
+    failing = true;
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await screen.findByRole("alert");
+    await waitFor(() => expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled());
+    // The ledger answered "unavailable" in that round; the page keeps what the last whole round showed.
+    expect(screen.getByText(/Wealthfolio 账本已连接/)).toBeInTheDocument();
+    expect(screen.getByText("My Binance")).toBeInTheDocument();
+  });
+
+  it("draws the curve as wide as the space it has and reads the point under the pointer", async () => {
+    const data = context();
+    const past = {
+      points: ["01", "02", "03", "04", "05"].map((day, index) => ({
+        date: `2026-10-${day}`,
+        net_usd: String(100 + index * 10),
+        valued_accounts: 1,
+        complete: true,
+        change_usd: index ? "10" : null,
+        change_pct: null,
+      })),
+      included_accounts: 1,
+      note: "",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.includes("history")
+                  ? past
+                  : data,
+            ),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    // A card 1200 wide whose left edge is 100 from the window's: wider than the 800 the curve was drawn at.
+    const laidOut = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockReturnValue({ left: 100, top: 0, width: 1200, height: 256 } as DOMRect);
+    try {
+      render(<Portfolio />);
+      fireEvent.click(await screen.findByRole("button", { name: "资产曲线" }));
+      const chart = await screen.findByRole("img", { name: "净资产历史曲线" });
+      expect(chart.getAttribute("viewBox")).toBe("0 0 1200 256");
+      const line = chart.querySelector("polyline")!.getAttribute("points")!.split(" ");
+      // The first point stands at the left margin and the last at the right one: no empty quarter either side.
+      expect(line[0].split(",")[0]).toBe("8.0");
+      expect(line[line.length - 1].split(",")[0]).toBe("1192.0");
+      // Points are 296 apart; the pointer over the third one reads the third day.
+      fireEvent.mouseMove(chart, { clientX: 100 + 8 + 296 * 2 });
+      expect(screen.getByText("2026-10-03 收盘")).toBeTruthy();
+      fireEvent.mouseMove(chart, { clientX: 100 + 8 + 296 * 1 - 100 });
+      expect(screen.getByText("2026-10-02 收盘")).toBeTruthy();
+      fireEvent.mouseMove(chart, { clientX: 100 });
+      expect(screen.getByText("2026-10-01 收盘")).toBeTruthy();
+    } finally {
+      laidOut.mockRestore();
+    }
+  });
 });

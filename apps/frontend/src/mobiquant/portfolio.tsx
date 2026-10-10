@@ -2,6 +2,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type MouseEvent as PointerMove,
@@ -266,8 +267,30 @@ function TrendView({
   money: (value: string | null | undefined) => string;
 }) {
   const [at, setAt] = useState<number | null>(null);
-  const width = 800;
-  const height = 260;
+  // The drawing is as wide as the space it is given. It was a fixed 800 by 260 scaled to fit the height, so in
+  // a card wider than that the curve sat in the middle with a quarter of the card empty on either side, the
+  // dates under it stood at the card's edges and not under its ends, and the reading followed the pointer's
+  // place in the card and not the point under it.
+  const drawing = useRef<SVGSVGElement>(null);
+  const [{ width, height }, setSize] = useState({ width: 800, height: 260 });
+  useLayoutEffect(() => {
+    const node = drawing.current;
+    if (!node) return;
+    const fit = () => {
+      const box = node.getBoundingClientRect();
+      const wide = Math.round(box.width);
+      const tall = Math.round(box.height);
+      if (!wide || !tall) return; // not laid out (hidden, or a test without a layout): keep the last size
+      setSize((size) =>
+        size.width === wide && size.height === tall ? size : { width: wide, height: tall },
+      );
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(fit);
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, []);
   const pad = 8;
   const values = points.map((point) => Number(point.net_usd));
   const low = Math.min(...values);
@@ -286,7 +309,9 @@ function TrendView({
     const box = event.currentTarget.getBoundingClientRect();
     const clientX = "touches" in event ? event.touches[0]?.clientX : event.clientX;
     if (clientX == null || !box.width) return;
-    const ratio = Math.min(1, Math.max(0, (clientX - box.left) / box.width));
+    // The point drawn nearest the pointer: the same arithmetic as x(), the other way round.
+    const drawn = ((clientX - box.left) / box.width) * width;
+    const ratio = Math.min(1, Math.max(0, (drawn - pad) / (width - 2 * pad)));
     setAt(Math.round(ratio * (points.length - 1)));
   };
   return (
@@ -308,6 +333,7 @@ function TrendView({
         )}
       </div>
       <svg
+        ref={drawing}
         viewBox={`0 0 ${width} ${height}`}
         className="h-64 w-full cursor-crosshair touch-none"
         role="img"
@@ -599,7 +625,7 @@ function Pie({
 
 export function Portfolio() {
   const [context, setContext] = useState<Context | null>(null);
-  const [ledger, setLedger] = useState<LedgerStatus>({ available: false });
+  const [ledger, setLedger] = useState<LedgerStatus | null>(null); // null until its status has been read
   const [history, setHistory] = useState<History | null>(null);
   const [tab, setTab] = useState<(typeof tabs)[number]>("资产总览");
   const [hidden, setHidden] = useState(false);
@@ -679,24 +705,47 @@ export function Portfolio() {
     setBusy(true);
     setError("");
     try {
-      const [data, status, past, income, long] = await Promise.all([
+      // The page is drawn from what its first screen shows: the context and the daily curve. The ledger's
+      // status (one line of the header), the yields and the long view (other tabs) are read alongside and put
+      // in place when they arrive. All five were awaited together, so whichever was slowest held the figures
+      // back: the 0.1 KB ledger status, when it happened to need a new connection to the asset server, took
+      // 1.0 s where the context had arrived in 0.4 s, and one that hung would have left the page empty.
+      const first = Promise.all([
         readAsset<Context>("context", current.signal),
-        readAsset<LedgerStatus>("wealthfolio/status", current.signal).catch(() => ({
-          available: false,
-        })),
         readAsset<History>("history", current.signal).catch(() => null),
-        readAsset<Yields>("yields", current.signal).catch(() => null),
-        readAsset<Finance>("finance", current.signal).catch(() => null),
+      ]).then(([data, past]) => {
+        if (!Array.isArray(data.overview?.accounts) || !Array.isArray(data.recent_events))
+          throw new Error("Invalid asset context");
+        return [data, past] as const;
+      });
+      // Nothing of a round is shown before its context, or without it.
+      const beside = <T,>(reading: Promise<T>, keep: (found: T) => void) =>
+        Promise.all([reading, first]).then(
+          ([found]) => {
+            if (!current.signal.aborted) keep(found);
+          },
+          () => undefined,
+        );
+      const rest = Promise.all([
+        beside(
+          readAsset<LedgerStatus>("wealthfolio/status", current.signal).catch(() => ({
+            available: false,
+          })),
+          setLedger,
+        ),
+        beside(readAsset<Yields>("yields", current.signal), (income) => {
+          if (Array.isArray(income.rows)) setYields(income);
+        }),
+        beside(readAsset<Finance>("finance", current.signal), (long) => {
+          if (Array.isArray(long.points)) setFinance(long);
+        }),
       ]);
+      const [data, past] = await first;
       if (current.signal.aborted) return;
-      if (!Array.isArray(data.overview?.accounts) || !Array.isArray(data.recent_events))
-        throw new Error("Invalid asset context");
       setContext(data);
-      setLedger(status);
       if (past && Array.isArray(past.points)) setHistory(past);
-      if (income && Array.isArray(income.rows)) setYields(income);
-      if (long && Array.isArray(long.points)) setFinance(long);
       setRound((count) => count + 1);
+      await rest; // "刷新中" until the rest is in as well
     } catch {
       if (controller.current === current)
         setError("刷新失败。保留上次显示的数据，请检查同步状态并稍后重试。");
@@ -1006,7 +1055,11 @@ export function Portfolio() {
         <p className="text-muted-foreground flex items-center gap-2 text-sm">
           <ShieldCheck className="size-4" />
           德国私有节点 · 仅查询权限 ·{" "}
-          {ledger.available ? "Wealthfolio 账本已连接" : "Wealthfolio 账本暂不可用"}
+          {ledger === null
+            ? "Wealthfolio 账本状态读取中"
+            : ledger.available
+              ? "Wealthfolio 账本已连接"
+              : "Wealthfolio 账本暂不可用"}
         </p>
         {error && (
           <p
