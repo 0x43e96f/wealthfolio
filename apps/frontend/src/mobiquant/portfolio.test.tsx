@@ -427,7 +427,18 @@ describe("private Portfolio", () => {
       included: false,
       status: "disconnected",
     });
-    data.overview.issues = [{ connection_id: "owned", reason: "missing_or_stale_snapshot" }];
+    // A second key to an account already counted is connected, though left out and failing.
+    data.overview.accounts.push({
+      ...data.overview.accounts[0],
+      id: "second",
+      label: "Second key",
+      included: false,
+      status: "error",
+    });
+    data.overview.issues = [
+      { connection_id: "owned", reason: "missing_or_stale_snapshot" },
+      { connection_id: "second", reason: "duplicate_account" },
+    ];
     const movement = {
       occurred_at: "2026-10-05T12:00:00Z",
       kind: "deposit",
@@ -488,9 +499,11 @@ describe("private Portfolio", () => {
     // A connected account's name is as it was, and so is one the overview does not list.
     expect(screen.getByText("My Binance")).toBeTruthy();
     expect(screen.getByText("未知账户")).toBeTruthy();
-    // Pending items are those of connected accounts, so no name there is marked.
+    // Pending items are those of connected accounts, so no name there is marked:
+    // being left out of the totals or failing to sync is not being disconnected.
     fireEvent.click(screen.getByRole("button", { name: "待处理事项" }));
     expect(screen.getByText("My Binance")).toBeTruthy();
+    expect(screen.getByText("Second key")).toBeTruthy();
     expect(screen.queryByText(/已断开/)).toBeNull();
   });
 
