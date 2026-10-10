@@ -141,6 +141,9 @@ const eventNames: Record<string, string> = {
   funding_fee: "资金费",
   settlement: "结算",
 };
+// After the name of an account no connection reads any more. The asset service puts
+// the same after the names it sends itself, with the fills and their summary.
+const disconnected = "（已断开）";
 function date(value: string | undefined) {
   return value ? new Date(value).toLocaleString("zh-CN") : "尚未同步";
 }
@@ -1019,8 +1022,12 @@ export function Portfolio() {
       </div>
     );
   };
-  const name = (id: string) =>
-    context?.overview.accounts.find((account) => account.id === id)?.label ?? "未知账户";
+  // Money movements and pending items come with a connection's id and no name.
+  const name = (id: string) => {
+    const found = context?.overview.accounts.find((account) => account.id === id);
+    if (!found) return "未知账户";
+    return found.enabled ? found.label : found.label + disconnected;
+  };
 
   return (
     <main className="bg-background text-foreground min-h-screen p-4 md:p-8">

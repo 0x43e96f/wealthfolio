@@ -414,6 +414,86 @@ describe("private Portfolio", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("names a disconnected account in the money movements as its fills name it", async () => {
+    const data = context();
+    // An account disconnected and not added again stays in the overview, and its
+    // movements come under its own connection.
+    data.overview.accounts.push({
+      ...data.overview.accounts[0],
+      id: "left",
+      label: "Old IBKR",
+      provider: "ibkr",
+      enabled: false,
+      included: false,
+      status: "disconnected",
+    });
+    data.overview.issues = [{ connection_id: "owned", reason: "missing_or_stale_snapshot" }];
+    const movement = {
+      occurred_at: "2026-10-05T12:00:00Z",
+      kind: "deposit",
+      asset: "USD",
+      amount: "100",
+      fee: "0",
+    };
+    data.recent_events = [
+      { ...movement, connection_id: "left", source_id: "deposit:1" },
+      { ...movement, connection_id: "owned", source_id: "deposit:2" },
+      { ...movement, connection_id: "nobody", source_id: "deposit:3" },
+    ];
+    // The asset service marks the name itself where it sends one.
+    const marked = "Old IBKR（已断开）";
+    const trades = {
+      total: 1,
+      fills: [
+        {
+          connection_id: "left",
+          account: marked,
+          source_id: "fill:1",
+          occurred_at: "2026-10-05T12:00:00Z",
+          asset: "AAPL",
+          amount: "1",
+          price: "180",
+          quote: "USD",
+          fee: "1",
+          pnl: null,
+          scope: "stk",
+        },
+      ],
+      summary: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.includes("trades")
+                  ? trades
+                  : data,
+            ),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "交易流水" }));
+    fireEvent.click(screen.getByRole("button", { name: "成交明细" }));
+    expect(await screen.findByText(marked)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "资金流水" }));
+    expect(screen.getByText(marked)).toBeTruthy();
+    expect(screen.queryByText("Old IBKR")).toBeNull();
+    // A connected account's name is as it was, and so is one the overview does not list.
+    expect(screen.getByText("My Binance")).toBeTruthy();
+    expect(screen.getByText("未知账户")).toBeTruthy();
+    // Pending items are those of connected accounts, so no name there is marked.
+    fireEvent.click(screen.getByRole("button", { name: "待处理事项" }));
+    expect(screen.getByText("My Binance")).toBeTruthy();
+    expect(screen.queryByText(/已断开/)).toBeNull();
+  });
+
   it("shows net assets in the chosen currency and each day's change on the curve", async () => {
     const data = context();
     data.fx = { USD: "1.000000", CAD: "1.421400" };
