@@ -1132,7 +1132,7 @@ export function Portfolio() {
             hidden={hidden}
             date={today?.date ?? null}
             total={today?.change_usd ?? null}
-            close={today?.close_usd ?? null}
+            close={today?.net_usd ?? null}
           >
             <Card>
               <CardHeader>
@@ -1627,7 +1627,7 @@ export function Portfolio() {
                                 type="button"
                                 className="inline-flex items-center gap-1"
                                 aria-expanded={opened === row.account.id}
-                                aria-label={`${row.account.label} 明细`}
+                                aria-label={`${privateText(row.account.label)} 明细`}
                               >
                                 {opened === row.account.id ? (
                                   <ChevronDown className="size-4" />
@@ -1972,7 +1972,7 @@ export function Portfolio() {
         <footer className="text-muted-foreground flex flex-wrap justify-between gap-3 text-xs">
           <span>页面更新时间：{date(context?.overview.as_of)}</span>
           <a
-            href="https://github.com/0x43e96f/wealthfolio/tree/feature/mobiquant-portfolio-v3.9.1"
+            href="https://github.com/0x43e96f/wealthfolio/tree/feat/daily-attribution-v2"
             target="_blank"
             rel="noopener noreferrer"
           >

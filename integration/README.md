@@ -51,7 +51,7 @@ Run once as root on the Germany machine, after `/opt/mobiquant-assets` is on a c
 
 ```sh
 useradd --system --no-create-home --shell /usr/sbin/nologin mq-ledger
-git clone --branch feature/mobiquant-portfolio-v3.9.1 https://github.com/0x43e96f/wealthfolio.git /opt/mobiquant-wealthfolio
+git clone --branch feat/daily-attribution-v2 https://github.com/0x43e96f/wealthfolio.git /opt/mobiquant-wealthfolio
 cd /opt/mobiquant-wealthfolio/integration
 /opt/mobiquant-assets/.venv/bin/python provision.py
 docker compose --project-name mobiquant-wealthfolio --env-file /etc/mobiquant-wealthfolio.env build

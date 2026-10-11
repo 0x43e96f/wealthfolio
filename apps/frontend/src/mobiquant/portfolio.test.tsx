@@ -98,6 +98,42 @@ function context(): Context {
 }
 
 describe("private Portfolio", () => {
+  it("keeps the real daily card mounted when API money has a numeric type", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.endsWith("history")
+                  ? {
+                      points: [
+                        {
+                          date: "2026-10-05",
+                          net_usd: "123.45",
+                          change_usd: 20,
+                          valued_accounts: 1,
+                          complete: true,
+                        },
+                      ],
+                      included_accounts: 1,
+                      note: "测试日线",
+                    }
+                  : context(),
+            ),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    await screen.findByText("My Binance");
+    const card = screen.getByRole("button", { name: "查看今日净值变化明细" });
+    expect(card).toHaveTextContent("—");
+    expect(screen.getByRole("heading", { name: "Portfolio" })).toBeVisible();
+  });
   it("keeps authoritative balances available when the ledger fails, without including watch wallets or inventing profit", async () => {
     vi.stubGlobal(
       "fetch",
@@ -115,6 +151,7 @@ describe("private Portfolio", () => {
     fireEvent.click(screen.getByRole("button", { name: "隐藏金额" }));
     await waitFor(() => expect(screen.queryByText("$123.45")).not.toBeInTheDocument());
     expect(screen.queryByText("My Binance")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "My Binance 明细" })).not.toBeInTheDocument();
   });
 
   it("renders external names as text and preserves the last snapshot after a failed refresh", async () => {

@@ -279,8 +279,9 @@ export function amount(value: string | null | undefined, currency: string): stri
   return text === "—" ? text : text.replace("$", "") + " " + currency;
 }
 
-export function usd(value: string | null | undefined): string {
-  if (value == null || !/^-?\d+(?:\.\d+)?$/.test(value) || value.length > 160) return "—";
+export function usd(value: unknown): string {
+  if (typeof value !== "string" || !/^-?\d+(?:\.\d+)?$/.test(value) || value.length > 160)
+    return "—";
   const negative = value.startsWith("-");
   const [whole, fraction = ""] = (negative ? value.slice(1) : value).split(".");
   const padded = fraction.padEnd(3, "0");

@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { ownedAccounts, usd, type Context } from "./client";
 
 describe("financial display and authoritative inclusion", () => {
+  it.each([20, {}, [], undefined, "1.2.3", "9".repeat(161)])(
+    "masks malformed API money %j without throwing",
+    (value) => {
+      expect(usd(value)).toBe("—");
+    },
+  );
   it("rounds exact decimals without losing large integer precision", () => {
     expect(usd("9007199254740993.125")).toBe("$9,007,199,254,740,993.13");
     expect(usd("-0.005")).toBe("-$0.01");
