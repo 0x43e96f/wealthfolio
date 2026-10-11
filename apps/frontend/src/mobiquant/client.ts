@@ -305,6 +305,7 @@ export function ownedAccounts(context: Context): Account[] {
 export async function readAsset<T>(
   path:
     | "context"
+    | "attribution"
     | "wealthfolio/status"
     | "history"
     | `history?interval=${"1h" | "4h" | "1d" | "1M"}`

@@ -9,6 +9,7 @@ import {
   type TouchEvent as FingerMove,
 } from "react";
 import { Button } from "@wealthfolio/ui/components/ui/button";
+import { DailyAttribution } from "./attribution";
 import { Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui/components/ui/card";
 import {
   ChevronDown,
@@ -1163,6 +1164,7 @@ export function Portfolio() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {tab === "资产总览" && context && <DailyAttribution asOf={context.overview.as_of} hidden={hidden} />}
             {tab === "资产总览" && trend.length > 1 && (
               <div className="mb-6">
                 <div className="text-muted-foreground mb-2 flex justify-between text-xs">
