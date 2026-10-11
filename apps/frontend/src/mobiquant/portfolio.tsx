@@ -124,6 +124,8 @@ const notes: Record<string, string> = {
   some_prices_at_last_close: "期权、非美元标的等没有报价的持仓仍按上一收盘价或成交价。",
   fund_detail_unavailable: "基金与债券只有总额：富途接口不提供明细和币种。",
   fills_awaiting_statement: "有外币成交暂无汇率，待下一份日终报表计入。",
+  price_held:
+    "有持仓的报价比上一次读数高出 20 倍以上，暂按上一次的报价计入；6 小时后仍是这个价才采用。",
 };
 const eventNames: Record<string, string> = {
   trade: "成交",
