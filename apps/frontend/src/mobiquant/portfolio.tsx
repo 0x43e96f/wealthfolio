@@ -1972,7 +1972,7 @@ export function Portfolio() {
         <footer className="text-muted-foreground flex flex-wrap justify-between gap-3 text-xs">
           <span>页面更新时间：{date(context?.overview.as_of)}</span>
           <a
-            href="https://github.com/0x43e96f/wealthfolio/tree/feat/daily-attribution-v2"
+            href="https://github.com/0x43e96f/wealthfolio/tree/feature/mobiquant-portfolio-v3.9.1"
             target="_blank"
             rel="noopener noreferrer"
           >
