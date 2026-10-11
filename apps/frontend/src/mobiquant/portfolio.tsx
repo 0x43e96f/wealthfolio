@@ -1127,22 +1127,31 @@ export function Portfolio() {
               </p>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-muted-foreground text-sm font-medium">
-                今日净值变化
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-semibold tabular-nums">
-                {today?.change_usd != null ? money(today.change_usd) : "暂不可计算"}
-              </p>
-              <p className="text-muted-foreground mt-2 text-xs">
-                {today?.change_pct != null ? `${today.change_pct}% · ` : ""}
-                较上一日收盘（温哥华 0 点），含充值与提现
-              </p>
-            </CardContent>
-          </Card>
+          <DailyAttribution
+            asOf={context?.overview.as_of ?? ""}
+            hidden={hidden}
+            date={today?.date ?? null}
+            total={today?.change_usd ?? null}
+            close={today?.close_usd ?? null}
+          >
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-muted-foreground text-sm font-medium">
+                  今日净值变化
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-semibold tabular-nums">
+                  {today?.change_usd != null ? money(today.change_usd) : "暂不可计算"}
+                </p>
+                <p className="text-muted-foreground mt-2 text-xs">
+                  {today?.change_pct != null ? `${hidden ? "••••" : `${today.change_pct}%`} · ` : ""}
+                  较上一日收盘（温哥华 0 点），含充值与提现
+                </p>
+                <p className="text-muted-foreground mt-1 text-xs">悬停或点击查看涨跌来源</p>
+              </CardContent>
+            </Card>
+          </DailyAttribution>
         </section>
         <nav className="flex gap-2 overflow-x-auto" aria-label="Portfolio 视图">
           {tabs.map((item) => (
@@ -1164,7 +1173,6 @@ export function Portfolio() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {tab === "资产总览" && context && <DailyAttribution asOf={context.overview.as_of} hidden={hidden} />}
             {tab === "资产总览" && trend.length > 1 && (
               <div className="mb-6">
                 <div className="text-muted-foreground mb-2 flex justify-between text-xs">
