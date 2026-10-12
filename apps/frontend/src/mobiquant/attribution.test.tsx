@@ -182,9 +182,7 @@ describe("daily card attribution", () => {
       mock();
       render(view({ total }));
       const region = await hover();
-      expect(within(region).getByText("净值变化（同卡片）").nextElementSibling).toHaveTextContent(
-        "—",
-      );
+      expect(within(region).getByText("净值变化").nextElementSibling).toHaveTextContent("—");
       expect(within(region).getByText("其余差额").nextElementSibling).toHaveTextContent("—");
     },
   );
@@ -211,16 +209,55 @@ describe("daily card attribution", () => {
       expect(within(region).getByText("其余差额").nextElementSibling).toHaveTextContent("—");
     },
   );
-  it("opens on hover, uses card total and exposes all assets directly", async () => {
+  it("opens on hover, uses card total and lists the assets that moved", async () => {
     mock();
     render(view());
     expect(fetch).not.toHaveBeenCalled();
     const region = await hover();
-    expect(within(region).getByText("$20.00")).toBeInTheDocument();
-    expect(within(region).getByText("其余差额").nextElementSibling).toHaveTextContent("$5.00");
+    expect(within(region).getByText("净值变化").nextElementSibling).toHaveTextContent("+$20.00");
+    expect(within(region).getByText("其余差额").nextElementSibling).toHaveTextContent("+$5.00");
     expect(within(region).getByText("AAPL")).toBeVisible();
-    expect(within(region).getByText("Private Manual Account（部分待核对）")).toBeVisible();
     expect(within(region).queryByText(/投资盈亏/)).not.toBeInTheDocument();
+  });
+  it("leaves out what moved less than ten dollars or cannot be compared, and says how many", async () => {
+    const found = fixture();
+    const small = (symbol: string, price: string, quantity: string) => ({
+      ...found.assets[0],
+      asset: symbol,
+      symbol,
+      accounts: [
+        {
+          ...found.assets[0].accounts[0],
+          source_asset: symbol,
+          price_effect_usd: price,
+          quantity_effect_usd: quantity,
+        },
+      ],
+    });
+    const assets: unknown[] = found.assets;
+    assets.push(
+      small("DUST", "9.99", "-9.99"),
+      small("EDGE", "-10", "0"),
+      small("MOVED", "0.4", "-250"),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(found) }),
+    );
+    render(view());
+    const region = await hover();
+    expect(within(region).queryByText("DUST")).not.toBeInTheDocument();
+    expect(within(region).queryByText("Private Manual Account")).not.toBeInTheDocument();
+    expect(within(region).getByText("EDGE")).toBeVisible();
+    // Listed for its quantity; its forty cents of price are not a figure worth a cell.
+    const moved = within(region).getByText("MOVED").closest("summary")!;
+    expect(moved.textContent).toContain("-$250.00");
+    expect(moved.textContent).not.toContain("0.40");
+    expect(region.textContent).toContain("另有 2 项不足 $10 或无法逐项比较");
+    // The totals above the list are still of everything.
+    expect(
+      within(region).getByText("价格影响", { selector: "p" }).nextElementSibling,
+    ).toHaveTextContent("+$10.00");
   });
   it("supports keyboard focus and clicking", async () => {
     mock();
@@ -247,21 +284,17 @@ describe("daily card attribution", () => {
     const region = await hover();
     expect(region.textContent).not.toContain("Private");
     expect(region.textContent).not.toContain("$20");
-    expect(region.textContent).not.toContain("百分点");
+    expect(region.textContent).not.toMatch(/\d%/);
   });
   it("filters contributions without changing the card total", async () => {
     mock();
     render(view());
     const region = await hover();
     fireEvent.change(screen.getByLabelText("归因账户"), { target: { value: "two" } });
-    const row = within(region).getByText("AAPL").closest("tr")!;
+    const row = within(region).getByText("AAPL").closest("summary")!;
     expect(row.textContent).toContain("-$10.00");
-    expect(within(region).getByText("净值变化（同卡片）").nextElementSibling).toHaveTextContent(
-      "$20.00",
-    );
-    expect(
-      within(region).queryByText("Private Manual Account（部分待核对）"),
-    ).not.toBeInTheDocument();
+    expect(within(region).getByText("净值变化").nextElementSibling).toHaveTextContent("$20.00");
+    expect(region.textContent).toContain("共 1 项");
   });
   it("removes the old summary after failed refresh", async () => {
     mock();
@@ -277,12 +310,12 @@ describe("daily card attribution", () => {
     render(view({ date: "2026-10-10" }));
     fireEvent.click(screen.getByRole("button", { name: "查看今日净值变化明细" }));
     const region = await screen.findByRole("region", { name: "今日变化归因" });
-    expect(screen.getByRole("status")).toHaveTextContent("上一日的读取结果");
+    expect(screen.getByRole("status")).toHaveTextContent("日期对齐前不算差额和占比");
     expect(
       within(region).getByText("价格影响", { selector: "p" }).nextElementSibling,
     ).toHaveTextContent("$10.00");
     expect(within(region).getByText("其余差额").nextElementSibling).toHaveTextContent("—");
-    expect(region.textContent).not.toMatch(/\d+\.\d+ 个百分点/);
+    expect(within(region).getByText("AAPL").closest("summary")!.textContent).not.toContain("%");
     expect(region.textContent).not.toContain("请刷新");
   });
 });
