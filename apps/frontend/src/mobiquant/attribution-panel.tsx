@@ -153,7 +153,7 @@ export function AttributionPanel({
   const down = size(data.losses_usd);
   return (
     <section aria-label="今日变化归因" className="flex min-h-0 flex-col text-sm">
-      <header className="space-y-3 px-5 pb-4 pt-5">
+      <header className="shrink-0 space-y-3 px-5 pb-4 pt-5">
         <div className="flex items-baseline justify-between gap-3">
           <h3 className="text-muted-foreground text-xs font-medium tracking-wide">
             今日净值变化明细
@@ -189,15 +189,16 @@ export function AttributionPanel({
           </p>
         )}
       </header>
-      <div className="bg-muted/40 grid grid-cols-3 divide-x border-y">
+      <div className="bg-muted/40 grid shrink-0 grid-cols-3 divide-x border-y">
         {[
-          ["价格影响", data.price_effect_usd],
-          ["数量影响", data.quantity_effect_usd],
-          ["其余差额", residual],
-        ].map(([label, value]) => (
+          ["价格影响", data.price_effect_usd, "持仓涨跌"],
+          ["数量影响", data.quantity_effect_usd, "买卖和转入转出"],
+          ["其余差额", residual, "没法算到单个资产的部分"],
+        ].map(([label, value, meaning]) => (
           <div key={label} className="px-5 py-3">
             <p className="text-muted-foreground text-xs">{label}</p>
             <p className={`mt-1 font-medium tabular-nums ${tone(value)}`}>{signed(value)}</p>
+            <p className="text-muted-foreground mt-1 text-[11px]">{meaning}</p>
           </div>
         ))}
       </div>
