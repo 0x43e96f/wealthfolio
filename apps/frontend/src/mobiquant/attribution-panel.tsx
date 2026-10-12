@@ -3,6 +3,20 @@ import { ChevronRight } from "lucide-react";
 import { usd } from "./client";
 import { cents, decimal, decimalSum, negate } from "./attribution-money";
 
+/** What a holding sold today has made from its buys to its sales, by the service's reading of the fills. */
+interface Closed {
+  flat: boolean;
+  realized: string;
+  quote: string;
+  realized_usd: string | null;
+  change_pct: string | null;
+  basis: "source" | "computed" | "platform_cost";
+  average_buy: string;
+  average_sell: string;
+  quantity: string;
+  opened_at: string;
+}
+const BASIS = { source: "平台给的盈亏", computed: "按成交均价算", platform_cost: "按平台成本价算" };
 interface Contribution {
   connection_id: string;
   account: string;
@@ -12,6 +26,8 @@ interface Contribution {
   change_pct: string | null;
   activity_count: number;
   reason: string;
+  /** Absent from a service older than the figure. */
+  closed?: Closed | null;
 }
 export interface Attribution {
   start: string;
@@ -67,6 +83,10 @@ const day = (value: string) =>
       }).format(new Date(value));
 const stamp = (value: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN", { timeZone: "America/Vancouver" }) : "缺少快照";
+const plain = (value: string) =>
+  decimal(value) == null
+    ? "—"
+    : new Intl.NumberFormat("en-US", { maximumSignificantDigits: 6 }).format(Number(value));
 const clock = (value: string) =>
   Number.isNaN(new Date(value).getTime())
     ? "—"
@@ -111,6 +131,13 @@ export function AttributionPanel({
     const points = (Number(value) / Math.abs(Number(opening))) * 100;
     return Math.abs(points) < 0.005 ? null : `${points > 0 ? "+" : ""}${points.toFixed(2)}%`;
   };
+  /** In dollars where the service could put it so, else in the currency it was traded in. */
+  const outcome = (sale: Closed) =>
+    hidden
+      ? "••••"
+      : decimal(sale.realized_usd) != null
+        ? signed(sale.realized_usd)
+        : `${signed(sale.realized).replace("$", "")} ${sale.quote}`;
   const residual = sameDay
     ? decimalSum([
         cents(total),
@@ -125,23 +152,28 @@ export function AttributionPanel({
         (part) => filter === "all" || part.connection_id === filter,
       );
       const known = parts.filter((part) => part.price_effect_usd != null);
-      const moved = parts.filter((part) => listed(part.price_effect_usd, part.quantity_effect_usd));
+      const moved = parts.filter((part) => listed(part.price_effect_usd) || part.closed);
+      const sales = parts.flatMap((part) => (part.closed ? [part.closed] : []));
       return {
         ...row,
         // Several small parts can add up to a listed row; then all of them are its breakdown.
         accounts: moved.length ? moved : parts,
         partial: parts.some((part) => part.price_effect_usd == null),
         price_effect_usd: decimalSum(known.map((part) => part.price_effect_usd)),
-        quantity_effect_usd: decimalSum(known.map((part) => part.quantity_effect_usd)),
+        sales,
+        // One figure for the row only where every sale of it is in dollars.
+        sold: decimalSum(sales.map((sale) => sale.realized_usd)),
       };
     });
+  const weight = (row: (typeof rows)[number]) =>
+    Math.max(size(row.price_effect_usd), size(row.sold));
   const shown = rows
-    .filter((row) => listed(row.price_effect_usd, row.quantity_effect_usd))
-    .sort(
-      (one, two) =>
-        size(two.price_effect_usd) - size(one.price_effect_usd) ||
-        size(two.quantity_effect_usd) - size(one.quantity_effect_usd),
-    );
+    // A sale is listed whatever it made, unless it is known to be under the floor.
+    .filter(
+      (row) =>
+        listed(row.price_effect_usd) || (row.sales.length > 0 && (!row.sold || listed(row.sold))),
+    )
+    .sort((one, two) => weight(two) - weight(one));
   const largest = Math.max(0, ...shown.map((row) => size(row.price_effect_usd)));
   const accounts = data.accounts.filter(
     (row) =>
@@ -192,7 +224,7 @@ export function AttributionPanel({
       <div className="bg-muted/40 grid shrink-0 grid-cols-3 divide-x border-y">
         {[
           ["价格影响", data.price_effect_usd, "持仓涨跌"],
-          ["数量影响", data.quantity_effect_usd, "买卖和转入转出"],
+          ["数量影响", data.quantity_effect_usd, "买卖和转账，不算盈亏"],
           ["其余差额", residual, "没法算到单个资产的部分"],
         ].map(([label, value, meaning]) => (
           <div key={label} className="px-5 py-3">
@@ -229,7 +261,7 @@ export function AttributionPanel({
             <span className="whitespace-nowrap pl-6 text-left">资产</span>
             <span>价格影响</span>
             <span>占净值</span>
-            <span>数量影响</span>
+            <span>卖出盈亏</span>
           </div>
         </div>
         <div className="space-y-0.5 px-2 pb-2">
@@ -250,10 +282,16 @@ export function AttributionPanel({
                   <span className="truncate font-medium" title={name(row.symbol)}>
                     {name(row.symbol)}
                   </span>
-                  {row.partial && (
+                  {row.sales.length > 0 ? (
                     <span className="text-muted-foreground shrink-0 rounded border px-1 text-[10px]">
-                      部分待核对
+                      {row.sales.every((sale) => sale.flat) ? "已清仓" : "今日卖出"}
                     </span>
+                  ) : (
+                    row.partial && (
+                      <span className="text-muted-foreground shrink-0 rounded border px-1 text-[10px]">
+                        部分待核对
+                      </span>
+                    )
                   )}
                 </p>
                 <p className={`relative font-medium ${tone(row.price_effect_usd)}`}>
@@ -262,8 +300,12 @@ export function AttributionPanel({
                 <p className="text-muted-foreground relative text-xs">
                   {share(row.price_effect_usd) ?? ""}
                 </p>
-                <p className="relative">
-                  {listed(row.quantity_effect_usd) ? signed(row.quantity_effect_usd) : faint}
+                <p className={`relative font-medium ${tone(row.sold)}`}>
+                  {row.sold != null
+                    ? signed(row.sold)
+                    : row.sales.length === 1
+                      ? outcome(row.sales[0])
+                      : faint}
                 </p>
               </summary>
               <div className="mb-2 ml-5 mt-1 space-y-2 border-l py-1 pl-4 pr-3 text-xs">
@@ -285,11 +327,20 @@ export function AttributionPanel({
                         {part.reason && ` · ${part.reason}`}
                       </p>
                     </div>
-                    <p className={tone(part.price_effect_usd)}>{signed(part.price_effect_usd)}</p>
-                    <p />
-                    <p>
-                      {listed(part.quantity_effect_usd) ? signed(part.quantity_effect_usd) : faint}
+                    <p className={tone(part.price_effect_usd)}>
+                      {listed(part.price_effect_usd) ? signed(part.price_effect_usd) : faint}
                     </p>
+                    <p />
+                    <p className={tone(part.closed?.realized)}>
+                      {part.closed ? outcome(part.closed) : faint}
+                    </p>
+                    {part.closed && (
+                      <p className="text-muted-foreground col-span-full -mt-2 text-left text-[11px]">
+                        {hidden
+                          ? "••••"
+                          : `买入均价 ${plain(part.closed.average_buy)} → 卖出均价 ${plain(part.closed.average_sell)} ${part.closed.quote} · 卖出 ${plain(part.closed.quantity)} · ${day(part.closed.opened_at)?.slice(5) ?? "—"} 起 · ${BASIS[part.closed.basis] ?? ""}`}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -304,7 +355,7 @@ export function AttributionPanel({
         <footer className="text-muted-foreground space-y-2 border-t px-5 py-3 text-xs">
           {rows.length > shown.length && (
             <p>
-              另有 {rows.length - shown.length} 项不足 ${FLOOR} 或无法逐项比较，未列出。
+              另有 {rows.length - shown.length} 项涨跌不足 ${FLOOR} 或无法逐项比较，未列出。
             </p>
           )}
           <details>

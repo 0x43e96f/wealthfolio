@@ -249,11 +249,10 @@ describe("daily card attribution", () => {
     expect(within(region).queryByText("DUST")).not.toBeInTheDocument();
     expect(within(region).queryByText("Private Manual Account")).not.toBeInTheDocument();
     expect(within(region).getByText("EDGE")).toBeVisible();
-    // Listed for its quantity; its forty cents of price are not a figure worth a cell.
-    const moved = within(region).getByText("MOVED").closest("summary")!;
-    expect(moved.textContent).toContain("-$250.00");
-    expect(moved.textContent).not.toContain("0.40");
-    expect(region.textContent).toContain("另有 2 项不足 $10 或无法逐项比较");
+    // A change of quantity is money moved, not made: it lists nothing by itself.
+    expect(within(region).queryByText("MOVED")).not.toBeInTheDocument();
+    expect(region.textContent).not.toContain("250.00");
+    expect(region.textContent).toContain("另有 3 项涨跌不足 $10 或无法逐项比较");
     // The totals above the list are still of everything.
     expect(
       within(region).getByText("价格影响", { selector: "p" }).nextElementSibling,
@@ -295,6 +294,58 @@ describe("daily card attribution", () => {
     expect(row.textContent).toContain("-$10.00");
     expect(within(region).getByText("净值变化").nextElementSibling).toHaveTextContent("$20.00");
     expect(region.textContent).toContain("共 1 项");
+  });
+  it("says what a holding sold today made, sold out or in part, and in what currency", async () => {
+    const found = fixture();
+    const sale = (symbol: string, closed: object, price: string | null = "0") => ({
+      ...found.assets[0],
+      asset: symbol,
+      symbol,
+      price_effect_usd: price,
+      accounts: [
+        {
+          ...found.assets[0].accounts[0],
+          source_asset: symbol,
+          price_effect_usd: price,
+          quantity_effect_usd: price,
+          closed: {
+            flat: true,
+            quote: "USD",
+            change_pct: "-0.7",
+            basis: "computed",
+            average_buy: "1087",
+            average_sell: "1079",
+            quantity: "9",
+            opened_at: "2026-10-09T10:00:42+00:00",
+            ...closed,
+          },
+        },
+      ],
+    });
+    const assets: unknown[] = found.assets;
+    assets.push(
+      sale("LITE", { realized: "-72", realized_usd: "-72" }, null),
+      sale("PEPE", { realized: "310.5", realized_usd: "310.5", flat: false }, "-477"),
+      sale("06651", { realized: "-5920", realized_usd: null, quote: "HKD" }),
+      sale("PENNY", { realized: "3", realized_usd: "3" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(found) }),
+    );
+    render(view());
+    const region = await hover();
+    const row = (symbol: string) => within(region).getByText(symbol).closest("summary")!;
+    // Sold out in an account that is not split today: no price effect, the result all the same.
+    expect(row("LITE").textContent).toContain("已清仓");
+    expect(row("LITE").textContent).toContain("-$72.00");
+    expect(row("PEPE").textContent).toContain("今日卖出");
+    expect(row("PEPE").textContent).toContain("+$310.50");
+    expect(row("06651").textContent).toContain("-5,920.00 HKD");
+    expect(within(region).queryByText("PENNY")).not.toBeInTheDocument();
+    expect(row("LITE").parentElement!.textContent).toContain(
+      "买入均价 1,087 → 卖出均价 1,079 USD · 卖出 9 · 10-09 起 · 按成交均价算",
+    );
   });
   it("removes the old summary after failed refresh", async () => {
     mock();
