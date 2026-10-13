@@ -279,6 +279,25 @@ export function amount(value: string | null | undefined, currency: string): stri
   return text === "—" ? text : text.replace("$", "") + " " + currency;
 }
 
+// A dollar figure in another currency at the given rate (units of it per dollar), as an exact decimal.
+export function convert(value: unknown, rate: unknown): string | null {
+  const number = /^-?\d+(?:\.\d+)?$/;
+  if (typeof value !== "string" || typeof rate !== "string") return null;
+  if (!number.test(value) || !number.test(rate) || value.length > 160 || rate.length > 40)
+    return null;
+  const parts = (text: string) => {
+    const negative = text.startsWith("-");
+    const [whole, fraction = ""] = (negative ? text.slice(1) : text).split(".");
+    return { negative, digits: BigInt(whole + fraction), scale: fraction.length };
+  };
+  const a = parts(value);
+  const b = parts(rate);
+  const scale = a.scale + b.scale;
+  const digits = (a.digits * b.digits).toString().padStart(scale + 1, "0");
+  const text = scale ? `${digits.slice(0, -scale)}.${digits.slice(-scale)}` : digits;
+  return (a.negative !== b.negative && a.digits * b.digits !== 0n ? "-" : "") + text;
+}
+
 export function usd(value: unknown): string {
   if (typeof value !== "string" || !/^-?\d+(?:\.\d+)?$/.test(value) || value.length > 160)
     return "—";

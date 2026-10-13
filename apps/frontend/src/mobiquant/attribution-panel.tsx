@@ -103,17 +103,20 @@ export function AttributionPanel({
   date,
   total,
   close,
+  format = usd,
 }: {
   data: Attribution;
   hidden: boolean;
   date: string | null;
   total: string | null;
   close: string | null;
+  // How a dollar figure is written: the page's chosen currency, dollars when none is given.
+  format?: (value: string | null) => string;
 }) {
   const [filter, setFilter] = useState("all");
-  const money = (value: unknown) => (hidden ? "••••" : usd(decimal(value)));
+  const money = (value: unknown) => (hidden ? "••••" : format(decimal(value)));
   const signed = (value: unknown) =>
-    hidden ? "••••" : `${Number(decimal(value)) > 0 ? "+" : ""}${usd(decimal(value))}`;
+    hidden ? "••••" : `${Number(decimal(value)) > 0 ? "+" : ""}${format(decimal(value))}`;
   // Manual crypto symbols can themselves be private account names.
   const name = (value: string) => (hidden ? "••••" : value);
   const tone = (value: unknown) =>

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import {
   amount,
+  convert,
   ownedAccounts,
   percent,
   readAsset,
@@ -42,7 +43,6 @@ import {
 
 const tabs = [
   "资产总览",
-  "资产曲线",
   "财务全景",
   "资产分布",
   "持仓明细",
@@ -52,6 +52,12 @@ const tabs = [
   "待处理事项",
 ] as const;
 const units = ["USD", "CAD", "CNY", "HKD"] as const;
+const unitNames: Record<(typeof units)[number], string> = {
+  USD: "美元",
+  CAD: "加元",
+  CNY: "人民币",
+  HKD: "港元",
+};
 const bars = [
   ["1h", "1 小时"],
   ["4h", "4 小时"],
@@ -311,6 +317,8 @@ function TrendView({
   const line = values.map((value, index) => `${x(index).toFixed(1)},${y(value).toFixed(1)}`);
   const shown = Math.min(at ?? points.length - 1, points.length - 1);
   const point = points[shown];
+  // The service's figures are strings; one that is not is read as no change, not as a broken page.
+  const change = typeof point.change_usd === "string" ? point.change_usd : null;
   const move = (event: PointerMove<SVGSVGElement> | FingerMove<SVGSVGElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
     const clientX = "touches" in event ? event.touches[0]?.clientX : event.clientX;
@@ -325,15 +333,14 @@ function TrendView({
       <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <span className="text-2xl font-semibold tabular-nums">{money(point.net_usd)}</span>
         <span className="text-muted-foreground text-sm">{point.date} 收盘</span>
-        {point.change_usd != null && (
+        {change != null && (
           <span
             className={
-              "text-sm tabular-nums " +
-              (point.change_usd.startsWith("-") ? "text-red-600" : "text-green-600")
+              "text-sm tabular-nums " + (change.startsWith("-") ? "text-red-600" : "text-green-600")
             }
           >
-            {point.change_usd.startsWith("-") ? "" : "+"}
-            {money(point.change_usd)}
+            {change.startsWith("-") ? "" : "+"}
+            {money(change)}
             {point.change_pct != null ? `（${point.change_pct}%）` : ""}
           </span>
         )}
@@ -701,7 +708,12 @@ export function Portfolio() {
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
   const embedded = new URLSearchParams(window.location.search).get("embed") === "1";
-  const money = (value: string | null | undefined) => (hidden ? "••••" : usd(value));
+  // Every figure of the page is in the currency chosen on the net worth card. The service's figures are in
+  // dollars; another currency is those at the rate the context came with, today's, for past periods as well.
+  const rate = unit === "USD" ? undefined : context?.fx?.[unit];
+  const priced = (value: string | null | undefined) =>
+    rate ? amount(convert(value, rate), unit) : usd(value);
+  const money = (value: string | null | undefined) => (hidden ? "••••" : priced(value));
   const privateText = (value: string) => (hidden ? "••••" : value);
   const refresh = useCallback(async () => {
     controller.current?.abort();
@@ -991,7 +1003,15 @@ export function Portfolio() {
           </p>
         )}
         <Rows
-          headers={["持仓", "数量", "成本价", "浮动盈亏", "原币市值", "折合美元", "账户范围"]}
+          headers={[
+            "持仓",
+            "数量",
+            "成本价",
+            "浮动盈亏",
+            "原币市值",
+            `折合${rate ? unitNames[unit] : "美元"}`,
+            "账户范围",
+          ]}
           rows={lines.map((holding) => [
             holding.symbol,
             privateText(holding.quantity),
@@ -1135,6 +1155,7 @@ export function Portfolio() {
             date={today?.date ?? null}
             total={today?.change_usd ?? null}
             close={today?.net_usd ?? null}
+            format={priced}
           >
             <Card>
               <CardHeader>
@@ -1147,7 +1168,9 @@ export function Portfolio() {
                   {today?.change_usd != null ? money(today.change_usd) : "暂不可计算"}
                 </p>
                 <p className="text-muted-foreground mt-2 text-xs">
-                  {today?.change_pct != null ? `${hidden ? "••••" : `${today.change_pct}%`} · ` : ""}
+                  {today?.change_pct != null
+                    ? `${hidden ? "••••" : `${today.change_pct}%`} · `
+                    : ""}
                   较上一日收盘（温哥华 0 点），含充值与提现
                 </p>
                 <p className="text-muted-foreground mt-1 text-xs">悬停或点击查看涨跌来源</p>
@@ -1175,30 +1198,8 @@ export function Portfolio() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {tab === "资产总览" && trend.length > 1 && (
-              <div className="mb-6">
-                <div className="text-muted-foreground mb-2 flex justify-between text-xs">
-                  <span>
-                    {trend[0].date} · {money(trend[0].net_usd)}
-                  </span>
-                  <span>
-                    {trend[trend.length - 1].date} · {money(trend[trend.length - 1].net_usd)}
-                  </span>
-                </div>
-                {!hidden && <Trend points={trend} money={money} />}
-                <p className="text-muted-foreground mt-2 text-xs">
-                  {history?.note}
-                  {trend.some((point) => !point.complete) && " 部分日期尚有账户未同步，数值偏低。"}
-                </p>
-              </div>
-            )}
-            {tab === "资产曲线" && (
-              <div className="space-y-4">
-                <p className="text-muted-foreground text-sm">
-                  每天以温哥华时间 0 点为界，取各账户当日最后一次同步的净值相加。
-                  {history?.note}
-                  新接入账户的那一天不计算涨跌。
-                </p>
+            {tab === "资产总览" && trend.length > 0 && (
+              <div className="mb-6 space-y-3">
                 <div className="flex flex-wrap gap-2">
                   {bars.map(([value, title]) => (
                     <Button
@@ -1206,30 +1207,47 @@ export function Portfolio() {
                       size="sm"
                       variant={bar === value ? "default" : "outline"}
                       onClick={() => setBar(value)}
+                      aria-pressed={bar === value}
                     >
                       {title}
                     </Button>
                   ))}
                 </div>
                 {plotted.length > 0 && !hidden && <Trend points={plotted} money={money} />}
-                <Rows
-                  headers={["时间", "净资产", "较前一期", "涨跌幅", "计入账户"]}
-                  rows={[...plotted]
-                    .reverse()
-                    .map((point) => [
-                      point.date,
-                      sortable(money(point.net_usd), point.net_usd),
-                      sortable(
-                        point.change_usd == null ? "—" : money(point.change_usd),
-                        point.change_usd,
-                      ),
-                      sortable(
-                        point.change_pct == null ? "—" : `${point.change_pct}%`,
-                        point.change_pct,
-                      ),
-                      `${point.valued_accounts}${point.complete ? "" : "（不全）"}`,
-                    ])}
-                />
+                <p className="text-muted-foreground text-xs">
+                  每天以温哥华时间 0 点为界，取各账户当日最后一次同步的净值相加。
+                  {history?.note}
+                  新接入账户的那一期不计算涨跌。
+                  {plotted.some((point) => !point.complete) &&
+                    " 部分时间尚有账户未同步，数值偏低。"}
+                  {rate &&
+                    ` 金额按当前汇率 1 USD = ${plain(rate)} ${unit} 换算，过去各期用的也是这个汇率。`}
+                </p>
+                <details>
+                  <summary className="cursor-pointer text-sm font-medium">
+                    每期明细（{plotted.length} 期）
+                  </summary>
+                  <div className="mt-3">
+                    <Rows
+                      headers={["时间", "净资产", "较前一期", "涨跌幅", "计入账户"]}
+                      rows={[...plotted]
+                        .reverse()
+                        .map((point) => [
+                          point.date,
+                          sortable(money(point.net_usd), point.net_usd),
+                          sortable(
+                            point.change_usd == null ? "—" : money(point.change_usd),
+                            point.change_usd,
+                          ),
+                          sortable(
+                            point.change_pct == null ? "—" : `${point.change_pct}%`,
+                            point.change_pct,
+                          ),
+                          `${point.valued_accounts}${point.complete ? "" : "（不全）"}`,
+                        ])}
+                    />
+                  </div>
+                </details>
               </div>
             )}
             {tab === "财务全景" && (
@@ -1509,7 +1527,8 @@ export function Portfolio() {
                       }))}
                     />
                     <p className="text-muted-foreground mt-3 text-xs">
-                      美元、港元、人民币、加元资产包含该币种的现金、股票和基金，都已折成美元显示；
+                      美元、港元、人民币、加元资产包含该币种的现金、股票和基金，都已折成
+                      {rate ? unitNames[unit] : "美元"}显示；
                       稳定币和其他加密货币单独成类，不计入美元资产。
                     </p>
                   </section>
@@ -1953,7 +1972,7 @@ export function Portfolio() {
             {tab === "待处理事项" && (
               <div className="space-y-4">
                 <p className="text-muted-foreground text-sm">
-                  同步失败、快照过期、覆盖不完整或被排除的账户会列在这里；每天的净值变化见“资产曲线”。
+                  同步失败、快照过期、覆盖不完整或被排除的账户会列在这里；每天的净值变化见“资产总览”。
                 </p>
                 {(context?.overview.issues ?? []).length === 0 && (
                   <p className="py-6 text-center text-sm">所有账户同步正常，没有待处理项。</p>

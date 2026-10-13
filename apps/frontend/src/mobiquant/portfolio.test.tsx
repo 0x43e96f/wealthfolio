@@ -584,11 +584,15 @@ describe("private Portfolio", () => {
     fireEvent.change(await screen.findByRole("combobox", { name: "计价币种" }), {
       target: { value: "CAD" },
     });
-    expect(await screen.findByText("175.47 CAD")).toBeTruthy();
+    expect((await screen.findAllByText("175.47 CAD")).length).toBeGreaterThan(0);
     expect(screen.getByText("1 USD = 1.4214 CAD")).toBeTruthy();
     // Today's change against yesterday's close heads the page.
-    expect(screen.getAllByText("$23.45").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "资产曲线" }));
+    // ... in the currency chosen, as every figure under it is: 23.45 dollars at 1.4214.
+    expect(screen.getAllByText("33.33 CAD").length).toBeGreaterThan(0);
+    expect(screen.queryByText("$23.45")).toBeNull();
+    expect(screen.getByText(/按当前汇率 1 USD = 1.4214 CAD 换算/)).toBeTruthy();
+    // The curve and its periods are part of the overview: there is no tab of their own.
+    expect(screen.queryByRole("button", { name: "资产曲线" })).toBeNull();
     expect(await screen.findByText("23.45%")).toBeTruthy();
     // The reading follows the pointer: the left edge is the first day.
     const chart = screen.getAllByRole("img", { name: "净资产历史曲线" })[0];
@@ -820,7 +824,6 @@ describe("private Portfolio", () => {
       ),
     );
     render(<Portfolio />);
-    fireEvent.click(await screen.findByRole("button", { name: "资产曲线" }));
     const chart = await screen.findByRole("img", { name: "净资产历史曲线" });
     const frame = chart.parentElement!.parentElement!;
     frame.getBoundingClientRect = () => ({ left: 0, width: 800 }) as DOMRect;
@@ -957,7 +960,6 @@ describe("private Portfolio", () => {
       .mockReturnValue({ left: 100, top: 0, width: 1200, height: 256 } as DOMRect);
     try {
       render(<Portfolio />);
-      fireEvent.click(await screen.findByRole("button", { name: "资产曲线" }));
       const chart = await screen.findByRole("img", { name: "净资产历史曲线" });
       expect(chart.getAttribute("viewBox")).toBe("0 0 1200 256");
       const line = chart.querySelector("polyline")!.getAttribute("points")!.split(" ");

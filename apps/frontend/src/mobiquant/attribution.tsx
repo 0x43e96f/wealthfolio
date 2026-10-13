@@ -10,6 +10,7 @@ export function DailyAttribution({
   date,
   total,
   close,
+  format,
   children,
 }: {
   asOf: string;
@@ -17,6 +18,7 @@ export function DailyAttribution({
   date: string | null;
   total: string | null;
   close: string | null;
+  format?: (value: string | null) => string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -145,7 +147,14 @@ export function DailyAttribution({
             正在核对今日资产变化…
           </p>
         ) : (
-          <AttributionPanel data={data} hidden={hidden} date={date} total={total} close={close} />
+          <AttributionPanel
+            data={data}
+            hidden={hidden}
+            date={date}
+            total={total}
+            close={close}
+            format={format}
+          />
         )}
       </PopoverContent>
     </Popover>
