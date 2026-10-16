@@ -404,24 +404,25 @@ const sortable = (text: string, value: string | number | null | undefined): Cell
   text,
   sort: Number(value ?? 0) || 0,
 });
+// An empty table says what it is empty of: the accounts are connected by then (with none,
+// the overview says to connect one), so "connect an account" would mislead.
 function Rows({
   headers,
   rows,
   search,
   pick,
+  empty = "暂无数据。",
 }: {
   headers: string[];
   rows: Cell[][];
   search?: string;
   pick?: { column: number; label: string };
+  empty?: string;
 }) {
   const [order, setOrder] = useState<{ column: number; down: boolean } | null>(null);
   const [query, setQuery] = useState("");
   const [choice, setChoice] = useState("");
-  if (!rows.length)
-    return (
-      <p className="text-muted-foreground py-10 text-center">暂无数据。连接只读账户后开始同步。</p>
-    );
+  if (!rows.length) return <p className="text-muted-foreground py-10 text-center">{empty}</p>;
   const text = (cell: Cell) => (cell == null ? "—" : typeof cell === "string" ? cell : cell.text);
   const rank = (cell: Cell) => (cell != null && typeof cell === "object" ? cell.sort : text(cell));
   const options = pick ? [...new Set(rows.map((row) => text(row[pick.column])))].sort() : [];
@@ -1734,6 +1735,7 @@ export function Portfolio() {
                 )}
                 <Rows
                   search="搜索合约"
+                  empty="现在没有衍生品持仓（合约或期权）。"
                   headers={["合约", "账户", "方向", "数量", "名义敞口 / 期权市值", "未实现盈亏"]}
                   rows={[
                     ...positions.map((position): Cell[] => [
