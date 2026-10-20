@@ -163,6 +163,31 @@ describe("daily card attribution", () => {
     await hover();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it("keeps its side while it fades out and is not reopened from under the pointer", async () => {
+    mock();
+    // As in a browser: the panel animates out, and stays in the page until that ends.
+    const real = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      const style = real(element);
+      return new Proxy(style, {
+        get: (target, key) =>
+          key === "animationName" && element instanceof HTMLElement && element.dataset.state
+            ? `fade-${element.dataset.state}`
+            : (Reflect.get(target, key) as unknown),
+      });
+    });
+    render(view());
+    const trigger = screen.getByRole("button", { name: "查看今日净值变化明细" });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(new DOMRect(800, 0, 300, 120));
+    const content = (await hover()).closest<HTMLElement>("[data-side]")!;
+    expect(content.dataset.side).toBe("left");
+    fireEvent.mouseLeave(trigger);
+    await waitFor(() => expect(content.dataset.state).toBe("closed"));
+    // Moved under the card it would land under a pointer heading for the tabs.
+    expect(content.dataset.side).toBe("left");
+    fireEvent.mouseEnter(content);
+    expect(content.dataset.state).toBe("closed");
+  });
   it("does not cache a failed request and supports retry", async () => {
     const fetcher = vi
       .fn()

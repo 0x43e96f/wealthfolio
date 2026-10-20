@@ -35,8 +35,13 @@ export function DailyAttribution({
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  // Beside the card the panel has the height of the window; under it, only what is left
+  // below. Chosen as it opens and kept while it closes: a closing panel that moved under
+  // the card would land under the pointer, open again, move back and close, over and over.
+  const [beside, setBeside] = useState(false);
   const enter = () => {
     if (leaveTimer.current) clearTimeout(leaveTimer.current);
+    setBeside((triggerRef.current?.getBoundingClientRect().left ?? 0) >= 540);
     if (error && !open) setAttempt((value) => value + 1);
     setRequested(true);
     setOpen(true);
@@ -89,8 +94,6 @@ export function DailyAttribution({
       controller.abort();
     };
   }, [asOf, requested, attempt]);
-  // Beside the card the panel has the height of the window; under it, only what is left below.
-  const beside = open && (triggerRef.current?.getBoundingClientRect().left ?? 0) >= 540;
   return (
     <Popover open={open} onOpenChange={changeOpen}>
       <PopoverTrigger
@@ -126,7 +129,8 @@ export function DailyAttribution({
         sideOffset={12}
         collisionPadding={16}
         className="flex max-h-[min(44rem,var(--radix-popover-content-available-height))] w-[min(31rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl p-0 shadow-2xl"
-        onMouseEnter={enter}
+        // Only an open panel is kept open: one fading out under the pointer is not reopened.
+        onMouseEnter={() => open && enter()}
         onMouseLeave={leave}
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
