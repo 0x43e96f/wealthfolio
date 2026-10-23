@@ -65,3 +65,94 @@ body {
   color: var(--foreground);
   font-family: "IBM Plex Sans", "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
 }
+
+/* The main site's card look (MobiQuant web/static/theme.css: .mq-card, .mq-tone-*, .mq-stat, .mq-group), so the
+   page reads as one of its tabs. A panel is a card of the page with a faint wash of the brand blue from its top-left
+   corner and a lift under it; a toned one is tinted from that corner in the colour of what it says. The colours are
+   the site's: in the dark look the deep shade fills and the 500 shade draws the hairline, in the light look the
+   palest shade fills and the 600 one draws it. Unlayered, so it wins over the utilities on the same element. */
+:root {
+  --mq-wash: rgb(14 165 233 / 0.06);
+  --mq-line: #d5dde8;
+  --mq-lift: 0 1px 2px rgb(15 23 42 / 0.05), 0 12px 28px -20px rgb(15 23 42 / 0.28);
+  --mq-stat: #f8fafc;
+}
+.dark {
+  --mq-wash: rgb(56 189 248 / 0.07);
+  --mq-line: rgb(51 65 85 / 0.75);
+  --mq-lift: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 10px 30px -18px rgb(0 0 0 / 0.9);
+  --mq-stat: rgb(2 6 23 / 0.6);
+}
+.mq-panel {
+  border: 1px solid var(--mq-line);
+  border-radius: 0.875rem;
+  box-shadow: var(--mq-lift);
+  background: linear-gradient(140deg, var(--mq-wash), transparent 58%), var(--card);
+}
+.mq-panel[class*="mq-tone-"] {
+  border-color: rgb(var(--tone-line) / var(--tone-line-a, 0.45));
+  background: linear-gradient(
+    140deg,
+    rgb(var(--tone-fill) / var(--tone-fill-a, 0.45)),
+    var(--card) 70%
+  );
+}
+.mq-tone-blue {
+  --tone-line: 37 99 235;
+  --tone-fill: 239 246 255;
+}
+.mq-tone-teal {
+  --tone-line: 13 148 136;
+  --tone-fill: 240 253 250;
+}
+.mq-tone-emerald {
+  --tone-line: 5 150 105;
+  --tone-fill: 236 253 245;
+}
+.mq-tone-rose {
+  --tone-line: 225 29 72;
+  --tone-fill: 255 241 242;
+}
+.dark .mq-tone-blue {
+  --tone-line: 59 130 246;
+  --tone-fill: 23 37 84;
+  --tone-line-a: 0.4;
+}
+.dark .mq-tone-teal {
+  --tone-line: 20 184 166;
+  --tone-fill: 4 47 46;
+  --tone-line-a: 0.4;
+  --tone-fill-a: 0.4;
+}
+.dark .mq-tone-emerald {
+  --tone-line: 16 185 129;
+  --tone-fill: 2 44 34;
+}
+.dark .mq-tone-rose {
+  --tone-line: 244 63 94;
+  --tone-fill: 76 5 25;
+  --tone-line-a: 0.6;
+  --tone-fill-a: 0.6;
+}
+/* a figure with its name, as the site's stat cells */
+.mq-stat {
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--mq-stat);
+  border: 1px solid var(--mq-line);
+}
+/* a group's title inside a panel, after the short coloured bar the site puts before one */
+.mq-page h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+}
+.mq-page h3::before {
+  content: "";
+  flex: none;
+  width: 0.25rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background: #38bdf8;
+}

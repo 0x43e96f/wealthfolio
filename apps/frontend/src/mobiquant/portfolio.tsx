@@ -1054,7 +1054,7 @@ export function Portfolio() {
   };
 
   return (
-    <main className="bg-background text-foreground min-h-screen p-4 md:p-8">
+    <main className="mq-page bg-background text-foreground min-h-screen p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -1101,7 +1101,7 @@ export function Portfolio() {
           </p>
         )}
         <section className="grid gap-4 md:grid-cols-3">
-          <Card>
+          <Card className="mq-panel mq-tone-blue">
             <CardHeader>
               <CardTitle className="text-muted-foreground flex items-center justify-between text-sm font-medium">
                 <span>已知净资产</span>
@@ -1139,7 +1139,7 @@ export function Portfolio() {
               </p>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="mq-panel mq-tone-teal">
             <CardHeader>
               <CardTitle className="text-muted-foreground text-sm font-medium">自有账户</CardTitle>
             </CardHeader>
@@ -1158,7 +1158,16 @@ export function Portfolio() {
             close={today?.net_usd ?? null}
             format={priced}
           >
-            <Card>
+            <Card
+              className={
+                "mq-panel " +
+                (today?.change_usd == null || Number(today.change_usd) === 0
+                  ? ""
+                  : Number(today.change_usd) > 0
+                    ? "mq-tone-emerald"
+                    : "mq-tone-rose")
+              }
+            >
               <CardHeader>
                 <CardTitle className="text-muted-foreground text-sm font-medium">
                   今日净值变化
@@ -1191,7 +1200,7 @@ export function Portfolio() {
             </Button>
           ))}
         </nav>
-        <Card>
+        <Card className="mq-panel">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Wallet className="size-5" />
@@ -1265,7 +1274,7 @@ export function Portfolio() {
                       ["出金后仍在各账户里的", money(finance?.kept_usd)],
                     ] as const
                   ).map(([title, value]) => (
-                    <div key={title}>
+                    <div key={title} className="mq-stat">
                       <p className="text-muted-foreground text-xs">{title}</p>
                       <p className="text-xl font-semibold tabular-nums">{value}</p>
                     </div>
@@ -1777,7 +1786,7 @@ export function Portfolio() {
                       ["未生息的现金与稳定币", money(yields?.idle_usd)],
                     ] as const
                   ).map(([title, value]) => (
-                    <div key={title}>
+                    <div key={title} className="mq-stat">
                       <p className="text-muted-foreground text-xs">{title}</p>
                       <p className="text-xl font-semibold tabular-nums">{value}</p>
                     </div>
