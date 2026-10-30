@@ -186,6 +186,13 @@ export interface AllocationSource {
 export interface Allocation {
   holdings_usd: string | null;
   by_platform: { provider: string; accounts: number; usd: string; share: string | null }[];
+  // Custody: exchanges and wallets ("crypto") beside brokers and banks ("traditional").
+  by_realm?: {
+    realm: string;
+    usd: string;
+    share: string | null;
+    accounts: { account: string; provider: string; usd: string }[];
+  }[];
   by_asset: {
     asset: string;
     symbol: string;

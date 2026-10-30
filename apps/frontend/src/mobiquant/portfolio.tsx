@@ -73,6 +73,11 @@ const denominations: Record<string, string> = {
   crypto: "加密货币（非稳定币）",
   unknown: "未注明币种",
 };
+const realms: Record<string, string> = {
+  crypto: "加密资产（交易所与链上钱包）",
+  traditional: "现实资产（券商、银行与手动账户）",
+  unknown: "未归类平台",
+};
 const places: Record<string, string> = {
   china: "中国账户",
   canada: "加拿大",
@@ -704,7 +709,7 @@ export function Portfolio() {
     };
   }, [tab, round]);
   const [unit, setUnit] = useState<(typeof units)[number]>("USD");
-  const [split, setSplit] = useState<"大类" | "币种" | "平台" | "合并">("大类");
+  const [split, setSplit] = useState<"大类" | "币种" | "平台" | "托管" | "合并">("大类");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
@@ -1439,7 +1444,7 @@ export function Portfolio() {
             {tab === "资产分布" && (
               <div className="space-y-8">
                 <div className="flex flex-wrap gap-2">
-                  {(["大类", "币种", "平台", "合并"] as const).map((item) => (
+                  {(["大类", "币种", "平台", "托管", "合并"] as const).map((item) => (
                     <Button
                       key={item}
                       size="sm"
@@ -1452,7 +1457,9 @@ export function Portfolio() {
                           ? "按币种"
                           : item === "平台"
                             ? "按平台"
-                            : "跨账户合并持仓"}
+                            : item === "托管"
+                              ? "加密 vs 现实资产"
+                              : "跨账户合并持仓"}
                     </Button>
                   ))}
                 </div>
@@ -1484,6 +1491,27 @@ export function Portfolio() {
                           ),
                       }))}
                     />
+                  </section>
+                )}
+                {split === "托管" && (
+                  <section>
+                    <h3 className="mb-3 text-sm font-medium">加密 vs 现实资产 · 已知净资产</h3>
+                    <Pie
+                      label="加密与现实资产占比"
+                      rows={(allocation?.by_realm ?? []).map((row) => ({
+                        label: realms[row.realm] ?? row.realm,
+                        value: money(row.usd),
+                        share: row.share,
+                        detail: row.accounts.map(
+                          (item) =>
+                            `${providers[item.provider] ?? item.provider} · ${privateText(item.account)} · ${money(item.usd)}`,
+                        ),
+                      }))}
+                    />
+                    <p className="text-muted-foreground mt-3 text-xs">
+                      按钱放在哪里分：交易所和链上钱包里的都算加密资产（包括交易所里的代币化美股），
+                      券商、银行和手动记的账户算现实资产；手动账户登记为加密的仍算加密。口径与「按平台」相同，都是各账户已知净资产。
+                    </p>
                   </section>
                 )}
                 {split === "大类" && (

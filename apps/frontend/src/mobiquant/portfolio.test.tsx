@@ -48,6 +48,20 @@ function context(): Context {
     allocation: {
       holdings_usd: "123.45",
       by_platform: [{ provider: "binance", accounts: 1, usd: "123.45", share: "1.0000" }],
+      by_realm: [
+        {
+          realm: "crypto",
+          usd: "123.45",
+          share: "0.8000",
+          accounts: [{ account: "My Binance", provider: "binance", usd: "123.45" }],
+        },
+        {
+          realm: "traditional",
+          usd: "30.86",
+          share: "0.2000",
+          accounts: [{ account: "My IBKR", provider: "ibkr", usd: "30.86" }],
+        },
+      ],
       by_asset: [
         {
           asset: "btc",
@@ -232,6 +246,10 @@ describe("private Portfolio", () => {
     expect(screen.getAllByText("Binance · 1 个账户").length).toBeGreaterThan(0);
     fireEvent.mouseEnter(screen.getByRole("button", { name: /Binance · 1 个账户/ }));
     expect(screen.getByText(/My Binance · \$123\.45/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "加密 vs 现实资产" }));
+    expect(screen.getByRole("img", { name: "加密与现实资产占比" })).toBeTruthy();
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /^现实资产/ }));
+    expect(screen.getByText(/IBKR 盈透 · My IBKR · \$30\.86/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "跨账户合并持仓" }));
     // The merged view leads with each asset's share and where it is held.
     expect(screen.getByRole("img", { name: "各资产占比" })).toBeTruthy();
