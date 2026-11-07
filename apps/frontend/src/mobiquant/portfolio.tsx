@@ -1851,9 +1851,10 @@ export function Portfolio() {
                         充值核对（卡里充了多少，对照你记的出金）
                       </h3>
                       <Rows
-                        headers={["月份", "卡里的充值", "已记的 etherfi 出金", "差额"]}
+                        headers={["月份", "卡", "卡里的充值", "已记的出金", "差额"]}
                         rows={(spending?.topup_check ?? []).map((row) => [
                           row.month,
+                          row.source === "solayer" ? "Solayer" : "ether.fi",
                           sortable(money(row.topup_usd), row.topup_usd),
                           sortable(money(row.recorded_usd), row.recorded_usd),
                           sortable(

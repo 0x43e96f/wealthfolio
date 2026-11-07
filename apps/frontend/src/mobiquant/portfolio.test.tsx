@@ -887,7 +887,13 @@ describe("private Portfolio", () => {
       categories: ["网购", "餐饮", "家居", "其他"],
       cards: [],
       topup_check: [
-        { month: "2026-10", topup_usd: "500.00", recorded_usd: "400.00", gap_usd: "100.00" },
+        {
+          source: "etherfi",
+          month: "2026-10",
+          topup_usd: "500.00",
+          recorded_usd: "400.00",
+          gap_usd: "100.00",
+        },
       ],
       cashback_earned_usd: "1.50",
       cashback_claimed_usd: "1.00",

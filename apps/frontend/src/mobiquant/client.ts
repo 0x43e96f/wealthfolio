@@ -133,7 +133,13 @@ export interface Spending {
   records: SpendingRecord[];
   categories: string[];
   cards: { card: string; owner: "self" | "other"; total_usd: string; count: number }[];
-  topup_check: { month: string; topup_usd: string; recorded_usd: string; gap_usd: string }[];
+  topup_check: {
+    source: string;
+    month: string;
+    topup_usd: string;
+    recorded_usd: string;
+    gap_usd: string;
+  }[];
   cashback_earned_usd: string;
   cashback_claimed_usd: string;
 }
