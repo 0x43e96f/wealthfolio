@@ -38,6 +38,7 @@ import {
   type Yields,
   saveCashout,
   deleteCashout,
+  updateCashout,
   type Finance,
   type Period,
 } from "./client";
@@ -656,7 +657,16 @@ export function Portfolio() {
   const [yields, setYields] = useState<Yields | null>(null);
   const [finance, setFinance] = useState<Finance | null>(null);
   const [line, setLine] = useState<"net" | "generated">("net");
-  const [entry, setEntry] = useState({ day: "", place: "", usd: "", destination: "china", note: "" });
+  const [entry, setEntry] = useState({
+    day: "",
+    place: "",
+    usd: "",
+    destination: "china",
+    note: "",
+  });
+  const [editing, setEditing] = useState<string | null>(null);
+  const [listYear, setListYear] = useState(String(new Date().getFullYear()));
+  const [listMonth, setListMonth] = useState(String(new Date().getMonth() + 1).padStart(2, "0"));
   const [bar, setBar] = useState<(typeof bars)[number][0]>("1d");
   const [curve, setCurve] = useState<History | null>(null);
   // The curve's own reading, at whichever bar size is chosen. The daily series
@@ -806,12 +816,29 @@ export function Portfolio() {
   const options = holdings.filter((holding) => holding.scope === "opt");
   const addCashout = async () => {
     try {
-      await saveCashout({ ...entry, usd: entry.usd.replace(/,/g, "").trim() });
+      const body = { ...entry, usd: entry.usd.replace(/,/g, "").trim() };
+      if (editing) await updateCashout(editing, body);
+      else await saveCashout(body);
+      setEditing(null);
       setEntry({ day: "", place: "", usd: "", destination: entry.destination, note: "" });
       await refresh();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "保存失败");
     }
+  };
+  const startEdit = (row: NonNullable<Finance["records"]>[number]) => {
+    setEditing(row.id);
+    setEntry({
+      day: row.day,
+      place: row.place,
+      usd: row.usd,
+      destination: row.destination,
+      note: row.note,
+    });
+    document
+      .getElementById("cashout-form")
+      ?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    document.getElementById("cashout-day")?.focus();
   };
   const removeCashout = async (id: string, label: string) => {
     if (!window.confirm(`删除这笔出金？\n${label}\n删除后累计出金和各项统计会重新计算。`)) return;
@@ -1415,7 +1442,9 @@ export function Portfolio() {
                   />
                 </section>
                 <section id="cashout-form">
-                  <h3 className="mb-3 text-sm font-medium">记一笔新的出金</h3>
+                  <h3 className="mb-3 text-sm font-medium">
+                    {editing ? "修改这笔出金" : "记一笔新的出金"}
+                  </h3>
                   <div className="flex flex-wrap items-end gap-2 text-sm">
                     <input
                       type="date"
@@ -1465,32 +1494,96 @@ export function Portfolio() {
                       disabled={!entry.day || !entry.place || !entry.usd}
                       onClick={() => void addCashout()}
                     >
-                      保存
+                      {editing ? "保存修改" : "保存"}
                     </Button>
+                    {editing && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setEditing(null);
+                          setEntry({ ...entry, day: "", place: "", usd: "", note: "" });
+                        }}
+                      >
+                        取消修改
+                      </Button>
+                    )}
                   </div>
                 </section>
                 <section>
-                  <h3 className="mb-3 text-sm font-medium">出金明细</h3>
-                  <Rows
-                    headers={["日期", "金额", "去向", "经由", "备注", ""]}
-                    empty="还没有出金记录。"
-                    rows={(finance?.records ?? []).map((row) => [
-                      row.day,
-                      sortable(money(row.usd), row.usd),
-                      places[row.destination] ?? row.destination,
-                      row.place,
-                      row.note || "—",
-                      {
-                        text: "删除",
-                        sort: 0,
-                        act: () =>
-                          void removeCashout(
-                            row.id,
-                            `${row.day} · ${money(row.usd)} · ${row.place}`,
-                          ),
-                      },
-                    ])}
-                  />
+                  <h3 className="mb-3 text-sm font-medium">
+                    出金明细（可编辑，漏记的日期直接在上面补记）
+                  </h3>
+                  {(() => {
+                    const all = finance?.records ?? [];
+                    const years = [
+                      ...new Set([listYear, ...all.map((row) => row.day.slice(0, 4))]),
+                    ].sort((a, b) => b.localeCompare(a));
+                    const shown = all.filter(
+                      (row) =>
+                        (!listYear || row.day.startsWith(listYear)) &&
+                        (!listMonth || row.day.slice(5, 7) === listMonth),
+                    );
+                    const sum = shown.reduce((total, row) => total + Number(row.usd), 0);
+                    return (
+                      <>
+                        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                          <select
+                            aria-label="明细年份"
+                            value={listYear}
+                            onChange={(event) => setListYear(event.target.value)}
+                            className="border-input bg-background h-9 rounded-md border px-2"
+                          >
+                            <option value="">全部年份</option>
+                            {years.map((year) => (
+                              <option key={year} value={year}>
+                                {year} 年
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label="明细月份"
+                            value={listMonth}
+                            onChange={(event) => setListMonth(event.target.value)}
+                            className="border-input bg-background h-9 rounded-md border px-2"
+                          >
+                            <option value="">全部月份</option>
+                            {Array.from({ length: 12 }, (_, index) =>
+                              String(index + 1).padStart(2, "0"),
+                            ).map((month) => (
+                              <option key={month} value={month}>
+                                {Number(month)} 月
+                              </option>
+                            ))}
+                          </select>
+                          <span className="text-muted-foreground text-xs">
+                            共 {shown.length} 笔 · {money(String(sum))}
+                          </span>
+                        </div>
+                        <Rows
+                          headers={["日期", "金额", "去向", "经由", "备注", "", ""]}
+                          empty="这个时间段还没有出金记录。"
+                          rows={shown.map((row) => [
+                            row.day,
+                            sortable(money(row.usd), row.usd),
+                            places[row.destination] ?? row.destination,
+                            row.place,
+                            row.note || "—",
+                            { text: "编辑", sort: 0, act: () => startEdit(row) },
+                            {
+                              text: "删除",
+                              sort: 0,
+                              act: () =>
+                                void removeCashout(
+                                  row.id,
+                                  `${row.day} · ${money(row.usd)} · ${row.place}`,
+                                ),
+                            },
+                          ])}
+                        />
+                      </>
+                    );
+                  })()}
                 </section>
               </div>
             )}

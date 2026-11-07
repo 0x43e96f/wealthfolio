@@ -820,8 +820,29 @@ describe("private Portfolio", () => {
       note: "房租",
     });
     // The entries are listed with their notes, and one can be removed after asking.
+    // The list opens on the current month; pick the one the entry is in.
+    fireEvent.change(screen.getByLabelText("明细年份"), { target: { value: "2026" } });
+    fireEvent.change(screen.getByLabelText("明细月份"), { target: { value: "03" } });
     expect(screen.getByText("订阅年费")).toBeTruthy();
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    // Editing loads the entry into the form and saves it back with a PATCH.
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    expect(screen.getByLabelText<HTMLInputElement>("出金日期").value).toBe("2026-03-01");
+    fireEvent.change(screen.getByLabelText("出金日期"), { target: { value: "2026-03-02" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() => expect(calls.some((call) => call.method === "PATCH")).toBe(true));
+    const patch = calls.find((call) => call.method === "PATCH")!;
+    expect(patch.url.endsWith("cashouts/abc")).toBe(true);
+    expect(JSON.parse(patch.body!)).toEqual({
+      day: "2026-03-02",
+      place: "bitget",
+      usd: "75",
+      destination: "card",
+      note: "订阅年费",
+    });
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(

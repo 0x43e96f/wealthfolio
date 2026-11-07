@@ -100,6 +100,19 @@ export async function saveCashout(body: {
   });
   if (!response.ok) throw new Error("日期、金额或去向不对");
 }
+// Correct one cash-out: every field the owner can type may change.
+export async function updateCashout(
+  id: string,
+  body: { day: string; place: string; usd: string; destination: string; note: string },
+): Promise<void> {
+  const response = await fetch("api/assets/cashouts/" + encodeURIComponent(id), {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error("日期、金额或去向不对");
+}
 // Remove one cash-out the owner entered wrongly.
 export async function deleteCashout(id: string): Promise<void> {
   const response = await fetch("api/assets/cashouts/" + encodeURIComponent(id), {
