@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Portfolio } from "./portfolio";
 import type { Account, Context } from "./client";
@@ -852,53 +852,36 @@ describe("private Portfolio", () => {
     );
   });
 
-  it("shows card spending for the month, counts every card and refiles a merchant", async () => {
+  const spendRow = (
+    id: string,
+    day: string,
+    shop: string,
+    usd: string,
+    category: string,
+    tags: { kind: string; value: string }[] = [],
+    card = "1861",
+  ) => ({
+    id,
+    day,
+    kind: "spend",
+    description: shop,
+    card,
+    usd,
+    orig_amount: "28",
+    orig_currency: "CAD",
+    cashback_usd: "0.6",
+    mcc: "",
+    status: "CLEARED",
+    category,
+    owner: "self" as const,
+    counted: true,
+    tags,
+  });
+  const stubSpending = (
+    spending: object,
+    calls: { url: string; method?: string; body?: string }[],
+  ) => {
     const data = context();
-    const row = (
-      id: string,
-      day: string,
-      shop: string,
-      usd: string,
-      category: string,
-      card: string,
-      owner: "self" | "other",
-    ) => ({
-      id,
-      day,
-      kind: "spend",
-      description: shop,
-      card,
-      usd,
-      orig_amount: "28",
-      orig_currency: "CAD",
-      cashback_usd: "0.6",
-      mcc: "",
-      status: "CLEARED",
-      category,
-      owner,
-      counted: true,
-    });
-    const spending = {
-      records: [
-        row("b", "2026-10-02", "UBER CANADA/UBEREATS", "18", "餐饮", "1861", "self"),
-        row("c", "2026-10-02", "WEIXIN*Tea", "13", "其他", "1153", "other"),
-        row("a", "2026-09-30", "AMZN Mktp CA", "20", "网购", "1861", "self"),
-      ],
-      categories: ["网购", "餐饮", "家居", "其他"],
-      cards: [],
-      topup_check: [
-        {
-          source: "etherfi",
-          month: "2026-10",
-          topup_usd: "500.00",
-          recorded_usd: "400.00",
-          gap_usd: "100.00",
-        },
-      ],
-      cashback_earned_usd: "1.50",
-      cashback_claimed_usd: "1.00",
-    };
-    const calls: { url: string; method?: string; body?: string }[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string, init?: RequestInit) => {
@@ -919,6 +902,35 @@ describe("private Portfolio", () => {
         );
       }),
     );
+  };
+  const groups = {
+    order: ["吃喝", "购物"],
+    of: { 餐饮: "吃喝", 超市: "吃喝", 网购: "购物" },
+  };
+
+  it("shows card spending for the month, counts every card and refiles a merchant", async () => {
+    const spending = {
+      records: [
+        spendRow("b", "2026-10-02", "UBER CANADA/UBEREATS", "18", "餐饮"),
+        spendRow("c", "2026-10-02", "WEIXIN*Tea", "13", "其他", [], "1153"),
+        spendRow("a", "2026-09-30", "AMZN Mktp CA", "20", "网购"),
+      ],
+      categories: ["网购", "餐饮", "家居", "其他"],
+      cards: [],
+      topup_check: [
+        {
+          source: "etherfi",
+          month: "2026-10",
+          topup_usd: "500.00",
+          recorded_usd: "400.00",
+          gap_usd: "100.00",
+        },
+      ],
+      cashback_earned_usd: "1.50",
+      cashback_claimed_usd: "1.00",
+    };
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    stubSpending(spending, calls);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
     // Opens on the latest month with spending: every card is in it.
@@ -937,29 +949,48 @@ describe("private Portfolio", () => {
     expect(JSON.parse(put.body!)).toEqual({ merchant: "UBER CANADA/UBEREATS", category: "家居" });
   });
 
-  it("lists trips with their share, filters to one trip, and pins and adds trips", async () => {
-    const data = context();
-    const row = (id: string, day: string, shop: string, usd: string, trip: string) => ({
-      id,
-      day,
-      kind: "spend",
-      description: shop,
-      card: "1861",
-      usd,
-      orig_amount: "",
-      orig_currency: "USD",
-      cashback_usd: "",
-      mcc: "",
-      status: "CLEARED",
-      category: "餐饮",
-      owner: "self" as const,
-      counted: true,
-      trip,
-    });
+  it("drills from the groups down to a merchant and back, with the filters shown", async () => {
     const spending = {
       records: [
-        row("b", "2026-07-13", "TAVERN", "30", "t1"),
-        row("a", "2026-07-02", "HOME DINER", "70", ""),
+        spendRow("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
+        spendRow("c", "2026-10-03", "COSTCO", "40", "超市"),
+        spendRow("a", "2026-10-04", "AMZN", "20", "网购"),
+      ],
+      categories: ["网购", "餐饮", "超市"],
+      groups,
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    expect(await screen.findByText("$78.00", { selector: "p" })).toBeTruthy();
+    // The top level lists the groups; a group opens its categories, a category its merchants.
+    const filters = () => screen.getByLabelText("当前筛选");
+    fireEvent.click(screen.getByRole("button", { name: "吃喝" }));
+    expect(screen.getByText("$58.00", { selector: "p" })).toBeTruthy();
+    expect(filters().textContent).toContain("吃喝");
+    fireEvent.click(screen.getByRole("button", { name: "超市" }));
+    expect(screen.getByText("$40.00", { selector: "p" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "COSTCO" }));
+    expect(filters().textContent).toContain("COSTCO");
+    // Clearing the filters returns to the whole.
+    fireEvent.click(screen.getByRole("button", { name: "清除全部" }));
+    expect(screen.getByText("$78.00", { selector: "p" })).toBeTruthy();
+  });
+
+  it("counts tags inside the chosen scope, filters by one and tags a row by hand", async () => {
+    const trip = [{ kind: "旅行", value: "纽芬兰自驾" }];
+    const spending = {
+      records: [
+        spendRow("b", "2026-07-13", "TAVERN", "30", "餐饮", trip),
+        spendRow("d", "2026-07-14", "WESTJET", "300", "交通出行", [
+          ...trip,
+          { kind: "出行", value: "飞机" },
+        ]),
+        spendRow("a", "2026-07-02", "HOME DINER", "70", "餐饮"),
       ],
       trips: [
         {
@@ -968,65 +999,72 @@ describe("private Portfolio", () => {
           start_day: "2026-07-11",
           end_day: "2026-07-20",
           note: "",
-          total_usd: "30.00",
-          count: 1,
-          categories: { 餐饮: "30.00" },
+          total_usd: "330.00",
+          count: 2,
+          categories: {},
         },
       ],
-      categories: ["餐饮"],
+      categories: ["餐饮", "交通出行"],
+      groups: { order: ["吃喝", "交通与玩乐"], of: { 餐饮: "吃喝", 交通出行: "交通与玩乐" } },
+      tag_kinds: [
+        { kind: "旅行", source: "trip" },
+        { kind: "出行", source: "derived" },
+        { kind: "自定义", source: "manual" },
+      ],
       cards: [],
       topup_check: [],
       cashback_earned_usd: "0",
       cashback_claimed_usd: "0",
     };
     const calls: { url: string; method?: string; body?: string }[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init?: RequestInit) => {
-        calls.push({ url, method: init?.method, body: init?.body as string });
-        return Promise.resolve(
-          new Response(
-            JSON.stringify(
-              url.endsWith("wealthfolio/status")
-                ? { available: false }
-                : url.endsWith("spending")
-                  ? spending
-                  : url.includes("spending/")
-                    ? { ok: true }
-                    : data,
-            ),
-            { status: 200 },
-          ),
-        );
-      }),
-    );
+    stubSpending(spending, calls);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
     expect(await screen.findByText("2026-07 消费")).toBeTruthy();
-    // $30 of $100 is trip spending.
-    expect(screen.getByText("$30.00（30%）")).toBeTruthy();
-    // Choosing a trip narrows the figures to it.
-    fireEvent.click(screen.getByText("纽芬兰自驾", { selector: "button" }));
-    expect(await screen.findByText(/现在只看：纽芬兰自驾/)).toBeTruthy();
+    const panel = () => within(screen.getByLabelText("标签"));
+    // The trip holds $330 of the month; inside 吃喝 only its $30 dinner.
+    expect(panel().getAllByText("$330.00")).toHaveLength(2); // the kind and its one value
+    fireEvent.click(screen.getByRole("button", { name: "吃喝" }));
+    expect(panel().getAllByText("$30.00")).toHaveLength(2);
+    expect(panel().queryByText("飞机")).toBeNull();
+    // Choosing the trip keeps only its rows.
+    fireEvent.click(panel().getByRole("button", { name: "纽芬兰自驾" }));
     expect(screen.getByText("$30.00", { selector: "p" })).toBeTruthy();
-    // Pinning a row sends its id and the trip's id.
+    expect(screen.getByText("标签 旅行 · 纽芬兰自驾", { exact: false })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "去掉标签筛选" }));
+    expect(screen.getByText("$100.00", { selector: "p" })).toBeTruthy();
+    // Pinning a row to a trip sends its id and the trip's id.
     vi.stubGlobal(
       "prompt",
-      vi.fn(() => "纽芬兰自驾"),
+      vi.fn(() => "旅行:纽芬兰自驾"),
     );
-    // The last such button is the row's own (the others are table headers).
-    fireEvent.click(screen.getAllByRole("button", { name: "旅行" }).slice(-1)[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "标签" }).slice(-1)[0]);
     await waitFor(() => expect(calls.some((call) => call.url.endsWith("trip-marks"))).toBe(true));
     expect(JSON.parse(calls.find((call) => call.url.endsWith("trip-marks"))!.body!)).toEqual({
-      txn_id: "b",
+      txn_id: "a",
       trip: "t1",
     });
+    // A name that is not a trip becomes the owner's own tag on that row.
+    vi.stubGlobal(
+      "prompt",
+      vi.fn(() => "礼物"),
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: "标签" }).slice(-1)[0]);
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith("tag-marks"))).toBe(true));
+    expect(JSON.parse(calls.find((call) => call.url.endsWith("tag-marks"))!.body!)).toEqual({
+      txn_id: "a",
+      tag: "礼物",
+      on: true,
+    });
     // A new trip is posted with its dates.
+    fireEvent.click(screen.getByRole("button", { name: "管理旅行" }));
     fireEvent.change(screen.getByLabelText("旅行名称"), { target: { value: "新旅行" } });
     fireEvent.change(screen.getByLabelText("旅行开始日"), { target: { value: "2026-09-01" } });
     fireEvent.change(screen.getByLabelText("旅行结束日"), { target: { value: "2026-09-03" } });
     fireEvent.click(screen.getByRole("button", { name: "新增旅行" }));
-    await waitFor(() => expect(calls.some((call) => call.url.endsWith("spending/trips"))).toBe(true));
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("spending/trips"))).toBe(true),
+    );
     expect(JSON.parse(calls.find((call) => call.url.endsWith("spending/trips"))!.body!)).toEqual({
       name: "新旅行",
       start_day: "2026-09-01",
@@ -1035,53 +1073,20 @@ describe("private Portfolio", () => {
     });
   });
 
-  it("adds up every year when all years is chosen, and groups the categories in the coarse view", async () => {
-    const data = context();
-    const row = (id: string, day: string, shop: string, usd: string, category: string) => ({
-      id,
-      day,
-      kind: "spend",
-      description: shop,
-      card: "1861",
-      usd,
-      orig_amount: "",
-      orig_currency: "USD",
-      cashback_usd: "",
-      mcc: "",
-      status: "CLEARED",
-      category,
-      owner: "self" as const,
-      counted: true,
-    });
+  it("adds up every year when all years is chosen", async () => {
     const spending = {
       records: [
-        row("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
-        row("a", "2025-09-30", "AMZN", "20", "网购"),
+        spendRow("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
+        spendRow("a", "2025-09-30", "AMZN", "20", "网购"),
       ],
       categories: ["网购", "餐饮"],
-      groups: { order: ["吃喝", "购物"], of: { 餐饮: "吃喝", 网购: "购物" } },
+      groups,
       cards: [],
       topup_check: [],
       cashback_earned_usd: "0",
       cashback_claimed_usd: "0",
     };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify(
-              url.endsWith("wealthfolio/status")
-                ? { available: false }
-                : url.endsWith("spending")
-                  ? spending
-                  : data,
-            ),
-            { status: 200 },
-          ),
-        ),
-      ),
-    );
+    stubSpending(spending, []);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
     expect(await screen.findByText("2026-10 消费")).toBeTruthy();
@@ -1090,10 +1095,9 @@ describe("private Portfolio", () => {
     expect(screen.getByText("全部年份消费")).toBeTruthy();
     expect(screen.getByText("$38.00", { selector: "p" })).toBeTruthy();
     expect(screen.getByLabelText<HTMLSelectElement>("消费月份").disabled).toBe(true);
-    // The coarse view (the default) shows the groups; the fine view the categories.
-    expect(screen.getAllByText("吃喝").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "细分类" }));
-    expect(screen.getAllByText("餐饮").length).toBeGreaterThan(0);
+    // The top level lists the groups.
+    expect(screen.getByRole("button", { name: "吃喝" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "购物" })).toBeTruthy();
   });
 
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {

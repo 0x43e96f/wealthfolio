@@ -133,6 +133,9 @@ export interface SpendingRecord {
   label?: string;
   // The trip the row belongs to (an id), or "" for none.
   trip?: string;
+  // Every tag on the row: a trip (value = its name), a means of transport, 订阅, 医疗,
+  // or one of the owner's own. Tags slice spending next to the category.
+  tags?: { kind: string; value: string }[];
 }
 export interface SpendTrip {
   id: string;
@@ -149,6 +152,7 @@ export interface Spending {
   trips?: SpendTrip[];
   categories: string[];
   groups?: { order: string[]; of: Record<string, string> };
+  tag_kinds?: { kind: string; source: "trip" | "derived" | "manual" }[];
   cards: { card: string; owner: "self" | "other"; total_usd: string; count: number }[];
   topup_check: {
     source: string;
@@ -178,7 +182,11 @@ export async function saveTrip(
   id: string | null,
   body: { name: string; start_day: string; end_day: string; note: string },
 ): Promise<void> {
-  const response = await sendSpending(id ? "/trips/" + encodeURIComponent(id) : "/trips", id ? "PATCH" : "POST", body);
+  const response = await sendSpending(
+    id ? "/trips/" + encodeURIComponent(id) : "/trips",
+    id ? "PATCH" : "POST",
+    body,
+  );
   if (!response.ok) throw new Error("名称或日期不对");
 }
 export async function deleteTrip(id: string): Promise<void> {
@@ -189,6 +197,11 @@ export async function deleteTrip(id: string): Promise<void> {
 export async function markTrip(txn_id: string, trip: string): Promise<void> {
   if (!(await sendSpending("/trip-marks", "PUT", { txn_id, trip })).ok)
     throw new Error("旅行保存失败");
+}
+// Put one of the owner's own tags on a row (on) or take it off.
+export async function markTag(txn_id: string, tag: string, on: boolean): Promise<void> {
+  if (!(await sendSpending("/tag-marks", "PUT", { txn_id, tag, on })).ok)
+    throw new Error("标签保存失败");
 }
 // Store an ether.fi card export; days already stored are not added twice.
 export async function importCardCsv(csv: string): Promise<{ rows: number; new: number }> {
