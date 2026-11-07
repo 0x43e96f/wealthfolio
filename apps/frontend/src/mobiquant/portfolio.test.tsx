@@ -852,7 +852,7 @@ describe("private Portfolio", () => {
     );
   });
 
-  it("shows card spending for the month, keeps other people's cards apart and refiles a merchant", async () => {
+  it("shows card spending for the month, counts every card and refiles a merchant", async () => {
     const data = context();
     const row = (
       id: string,
@@ -921,12 +921,9 @@ describe("private Portfolio", () => {
     );
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
-    // Opens on the latest month with spending: only the owner's own card is in it.
+    // Opens on the latest month with spending: every card is in it.
     expect(await screen.findByText("2026-10 消费")).toBeTruthy();
-    expect(screen.getByText("$18.00", { selector: "p" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "我给别人付的卡" }));
-    expect(screen.getByText("$13.00", { selector: "p" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "我自己的卡" }));
+    expect(screen.getByText("$31.00", { selector: "p" })).toBeTruthy();
     expect(screen.getByText("（对不上）", { exact: false })).toBeTruthy();
     // A merchant is refiled by what the owner types.
     vi.stubGlobal(

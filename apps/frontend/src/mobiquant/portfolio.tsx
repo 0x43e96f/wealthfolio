@@ -661,7 +661,6 @@ export function Portfolio() {
   const [yields, setYields] = useState<Yields | null>(null);
   const [finance, setFinance] = useState<Finance | null>(null);
   const [spending, setSpending] = useState<Spending | null>(null);
-  const [spendOwner, setSpendOwner] = useState<"self" | "other">("self");
   const [spendYear, setSpendYear] = useState<string | null>(null);
   const [spendMonth, setSpendMonth] = useState<string | null>(null);
   const [spendCoarse, setSpendCoarse] = useState(true);
@@ -840,7 +839,7 @@ export function Portfolio() {
     }
   };
   const spendAll = (spending?.records ?? []).filter(
-    (row) => row.counted && row.owner === spendOwner,
+    (row) => row.counted,
   );
   const spendLatest = spendAll[0]?.day ?? "";
   const spendYearNow = spendYear ?? spendLatest.slice(0, 4);
@@ -1673,21 +1672,6 @@ export function Portfolio() {
             {tab === "消费" && (
               <div className="space-y-8">
                 <div className="flex flex-wrap items-center gap-2">
-                  {(
-                    [
-                      ["self", "我自己的卡"],
-                      ["other", "我给别人付的卡"],
-                    ] as const
-                  ).map(([value, title]) => (
-                    <Button
-                      key={value}
-                      size="sm"
-                      variant={spendOwner === value ? "default" : "outline"}
-                      onClick={() => setSpendOwner(value)}
-                    >
-                      {title}
-                    </Button>
-                  ))}
                   {(
                     [
                       [true, "粗分类"],
