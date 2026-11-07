@@ -664,6 +664,7 @@ export function Portfolio() {
   const [spendOwner, setSpendOwner] = useState<"self" | "other">("self");
   const [spendYear, setSpendYear] = useState<string | null>(null);
   const [spendMonth, setSpendMonth] = useState<string | null>(null);
+  const [spendCoarse, setSpendCoarse] = useState(true);
   const [spendNote, setSpendNote] = useState("");
   const [line, setLine] = useState<"net" | "generated">("net");
   const [entry, setEntry] = useState({
@@ -843,7 +844,8 @@ export function Portfolio() {
   );
   const spendLatest = spendAll[0]?.day ?? "";
   const spendYearNow = spendYear ?? spendLatest.slice(0, 4);
-  const spendMonthNow = spendMonth ?? spendLatest.slice(5, 7);
+  // A month only means something inside a year: with all years the whole span is shown.
+  const spendMonthNow = spendYearNow ? (spendMonth ?? spendLatest.slice(5, 7)) : "";
   const spendPrefix = spendYearNow + (spendMonthNow ? "-" + spendMonthNow : "");
   const spendBefore = (() => {
     if (!spendYearNow) return "";
@@ -858,10 +860,13 @@ export function Portfolio() {
   const spendShown = inSpend(spendPrefix);
   const sumUsd = (list: { usd: string }[]) =>
     list.reduce((total, row) => total + Number(row.usd), 0);
+  // The coarse view groups the fine categories (trains, flights and trips together).
+  const bucketOf = (category: string) =>
+    spendCoarse ? (spending?.groups?.of[category] ?? category) : category;
   const byCategory = (list: { usd: string; category: string }[]) => {
     const found = new Map<string, number>();
     for (const row of list)
-      found.set(row.category, (found.get(row.category) ?? 0) + Number(row.usd));
+      found.set(bucketOf(row.category), (found.get(bucketOf(row.category)) ?? 0) + Number(row.usd));
     return found;
   };
   const retag = async (merchant: string, current: string) => {
@@ -1683,6 +1688,21 @@ export function Portfolio() {
                       {title}
                     </Button>
                   ))}
+                  {(
+                    [
+                      [true, "粗分类"],
+                      [false, "细分类"],
+                    ] as const
+                  ).map(([value, title]) => (
+                    <Button
+                      key={title}
+                      size="sm"
+                      variant={spendCoarse === value ? "default" : "outline"}
+                      onClick={() => setSpendCoarse(value)}
+                    >
+                      {title}
+                    </Button>
+                  ))}
                   <label className="ml-auto cursor-pointer text-sm underline">
                     导入 ether.fi 导出的 CSV
                     <input
@@ -1705,9 +1725,11 @@ export function Portfolio() {
                       {(
                         [
                           [
-                            spendMonthNow
-                              ? `${spendPrefix} 消费`
-                              : `${spendYearNow || "全部"} 年消费`,
+                            spendYearNow
+                              ? spendMonthNow
+                                ? `${spendPrefix} 消费`
+                                : `${spendYearNow} 年消费`
+                              : "全部年份消费",
                             money(String(sumUsd(spendShown))),
                           ],
                           [
@@ -1743,6 +1765,7 @@ export function Portfolio() {
                       </select>
                       <select
                         aria-label="消费月份"
+                        disabled={!spendYearNow}
                         value={spendMonthNow}
                         onChange={(event) => setSpendMonth(event.target.value)}
                         className="border-input bg-background h-9 rounded-md border px-2"
@@ -1769,17 +1792,15 @@ export function Portfolio() {
                             share: value > 0 ? String(value / sumUsd(spendShown)) : "0",
                             detail: [
                               ...spendShown
-                                .filter((row) => row.category === name)
+                                .filter((row) => bucketOf(row.category) === name)
                                 .reduce((found, row) => {
-                                  found.set(
-                                    row.description,
-                                    (found.get(row.description) ?? 0) + Number(row.usd),
-                                  );
+                                  const key = spendCoarse ? row.category : row.description;
+                                  found.set(key, (found.get(key) ?? 0) + Number(row.usd));
                                   return found;
                                 }, new Map<string, number>()),
                             ]
                               .sort((a, b) => b[1] - a[1])
-                              .slice(0, 5)
+                              .slice(0, spendCoarse ? 12 : 5)
                               .map(([shop, value2]) => `${shop} · ${money(String(value2))}`),
                           }))}
                       />
@@ -1828,7 +1849,7 @@ export function Portfolio() {
                       </h3>
                       <Rows
                         search="搜索商户、分类或卡号"
-                        headers={["日期", "商户", "美元", "原币种", "分类", "卡", ""]}
+                        headers={["日期", "商户", "美元", "原币种", "大类", "分类", "卡", ""]}
                         rows={spendShown.map((row) => [
                           row.day,
                           row.description,
@@ -1836,6 +1857,7 @@ export function Portfolio() {
                           row.orig_currency && row.orig_currency !== "USD"
                             ? `${row.orig_amount} ${row.orig_currency}`
                             : "—",
+                          spending?.groups?.of[row.category] ?? "—",
                           row.category,
                           row.card || "—",
                           {
@@ -1845,6 +1867,12 @@ export function Portfolio() {
                           },
                         ])}
                       />
+                      {spendShown.length > 400 && (
+                        <p className="text-muted-foreground mt-2 text-xs">
+                          表里只列最近 400 笔；上面的合计、占比和对比包含全部 {spendShown.length}{" "}
+                          笔。
+                        </p>
+                      )}
                     </section>
                     <section>
                       <h3 className="mb-3 text-sm font-medium">

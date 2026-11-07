@@ -940,6 +940,67 @@ describe("private Portfolio", () => {
     expect(JSON.parse(put.body!)).toEqual({ merchant: "UBER CANADA/UBEREATS", category: "家居" });
   });
 
+  it("adds up every year when all years is chosen, and groups the categories in the coarse view", async () => {
+    const data = context();
+    const row = (id: string, day: string, shop: string, usd: string, category: string) => ({
+      id,
+      day,
+      kind: "spend",
+      description: shop,
+      card: "1861",
+      usd,
+      orig_amount: "",
+      orig_currency: "USD",
+      cashback_usd: "",
+      mcc: "",
+      status: "CLEARED",
+      category,
+      owner: "self" as const,
+      counted: true,
+    });
+    const spending = {
+      records: [
+        row("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
+        row("a", "2025-09-30", "AMZN", "20", "网购"),
+      ],
+      categories: ["网购", "餐饮"],
+      groups: { order: ["吃喝", "购物"], of: { 餐饮: "吃喝", 网购: "购物" } },
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.endsWith("spending")
+                  ? spending
+                  : data,
+            ),
+            { status: 200 },
+          ),
+        ),
+      ),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    expect(await screen.findByText("2026-10 消费")).toBeTruthy();
+    // All years: the month no longer applies, and nothing is left out.
+    fireEvent.change(screen.getByLabelText("消费年份"), { target: { value: "" } });
+    expect(screen.getByText("全部年份消费")).toBeTruthy();
+    expect(screen.getByText("$38.00", { selector: "p" })).toBeTruthy();
+    expect(screen.getByLabelText<HTMLSelectElement>("消费月份").disabled).toBe(true);
+    // The coarse view (the default) shows the groups; the fine view the categories.
+    expect(screen.getAllByText("吃喝").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "细分类" }));
+    expect(screen.getAllByText("餐饮").length).toBeGreaterThan(0);
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {

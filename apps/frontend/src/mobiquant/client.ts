@@ -132,6 +132,7 @@ export interface SpendingRecord {
 export interface Spending {
   records: SpendingRecord[];
   categories: string[];
+  groups?: { order: string[]; of: Record<string, string> };
   cards: { card: string; owner: "self" | "other"; total_usd: string; count: number }[];
   topup_check: {
     source: string;
