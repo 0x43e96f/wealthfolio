@@ -128,9 +128,25 @@ export interface SpendingRecord {
   category: string;
   owner: "self" | "other";
   counted: boolean;
+  // What the page shows for the row (a card fee also names its card); the stored
+  // description stays the key a merchant's category is looked up by.
+  label?: string;
+  // The trip the row belongs to (an id), or "" for none.
+  trip?: string;
+}
+export interface SpendTrip {
+  id: string;
+  name: string;
+  start_day: string;
+  end_day: string;
+  note: string;
+  total_usd: string;
+  count: number;
+  categories: Record<string, string>;
 }
 export interface Spending {
   records: SpendingRecord[];
+  trips?: SpendTrip[];
   categories: string[];
   groups?: { order: string[]; of: Record<string, string> };
   cards: { card: string; owner: "self" | "other"; total_usd: string; count: number }[];
@@ -156,6 +172,23 @@ async function sendSpending(path: string, method: string, body: unknown): Promis
 export async function saveMerchantCategory(merchant: string, category: string): Promise<void> {
   if (!(await sendSpending("/categories", "PUT", { merchant, category })).ok)
     throw new Error("分类保存失败");
+}
+// Trips tag spending by date without changing its category.
+export async function saveTrip(
+  id: string | null,
+  body: { name: string; start_day: string; end_day: string; note: string },
+): Promise<void> {
+  const response = await sendSpending(id ? "/trips/" + encodeURIComponent(id) : "/trips", id ? "PATCH" : "POST", body);
+  if (!response.ok) throw new Error("名称或日期不对");
+}
+export async function deleteTrip(id: string): Promise<void> {
+  if (!(await sendSpending("/trips/" + encodeURIComponent(id), "DELETE", undefined)).ok)
+    throw new Error("删除失败");
+}
+// Pin one row to a trip (its id), to "none", or back to the dates ("auto").
+export async function markTrip(txn_id: string, trip: string): Promise<void> {
+  if (!(await sendSpending("/trip-marks", "PUT", { txn_id, trip })).ok)
+    throw new Error("旅行保存失败");
 }
 // Store an ether.fi card export; days already stored are not added twice.
 export async function importCardCsv(csv: string): Promise<{ rows: number; new: number }> {

@@ -937,6 +937,104 @@ describe("private Portfolio", () => {
     expect(JSON.parse(put.body!)).toEqual({ merchant: "UBER CANADA/UBEREATS", category: "家居" });
   });
 
+  it("lists trips with their share, filters to one trip, and pins and adds trips", async () => {
+    const data = context();
+    const row = (id: string, day: string, shop: string, usd: string, trip: string) => ({
+      id,
+      day,
+      kind: "spend",
+      description: shop,
+      card: "1861",
+      usd,
+      orig_amount: "",
+      orig_currency: "USD",
+      cashback_usd: "",
+      mcc: "",
+      status: "CLEARED",
+      category: "餐饮",
+      owner: "self" as const,
+      counted: true,
+      trip,
+    });
+    const spending = {
+      records: [
+        row("b", "2026-07-13", "TAVERN", "30", "t1"),
+        row("a", "2026-07-02", "HOME DINER", "70", ""),
+      ],
+      trips: [
+        {
+          id: "t1",
+          name: "纽芬兰自驾",
+          start_day: "2026-07-11",
+          end_day: "2026-07-20",
+          note: "",
+          total_usd: "30.00",
+          count: 1,
+          categories: { 餐饮: "30.00" },
+        },
+      ],
+      categories: ["餐饮"],
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, method: init?.method, body: init?.body as string });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.endsWith("spending")
+                  ? spending
+                  : url.includes("spending/")
+                    ? { ok: true }
+                    : data,
+            ),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    expect(await screen.findByText("2026-07 消费")).toBeTruthy();
+    // $30 of $100 is trip spending.
+    expect(screen.getByText("$30.00（30%）")).toBeTruthy();
+    // Choosing a trip narrows the figures to it.
+    fireEvent.click(screen.getByText("纽芬兰自驾", { selector: "button" }));
+    expect(await screen.findByText(/现在只看：纽芬兰自驾/)).toBeTruthy();
+    expect(screen.getByText("$30.00", { selector: "p" })).toBeTruthy();
+    // Pinning a row sends its id and the trip's id.
+    vi.stubGlobal(
+      "prompt",
+      vi.fn(() => "纽芬兰自驾"),
+    );
+    // The last such button is the row's own (the others are table headers).
+    fireEvent.click(screen.getAllByRole("button", { name: "旅行" }).slice(-1)[0]);
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith("trip-marks"))).toBe(true));
+    expect(JSON.parse(calls.find((call) => call.url.endsWith("trip-marks"))!.body!)).toEqual({
+      txn_id: "b",
+      trip: "t1",
+    });
+    // A new trip is posted with its dates.
+    fireEvent.change(screen.getByLabelText("旅行名称"), { target: { value: "新旅行" } });
+    fireEvent.change(screen.getByLabelText("旅行开始日"), { target: { value: "2026-09-01" } });
+    fireEvent.change(screen.getByLabelText("旅行结束日"), { target: { value: "2026-09-03" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增旅行" }));
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith("spending/trips"))).toBe(true));
+    expect(JSON.parse(calls.find((call) => call.url.endsWith("spending/trips"))!.body!)).toEqual({
+      name: "新旅行",
+      start_day: "2026-09-01",
+      end_day: "2026-09-03",
+      note: "",
+    });
+  });
+
   it("adds up every year when all years is chosen, and groups the categories in the coarse view", async () => {
     const data = context();
     const row = (id: string, day: string, shop: string, usd: string, category: string) => ({
