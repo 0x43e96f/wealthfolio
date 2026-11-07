@@ -38,6 +38,9 @@ import {
   type Yields,
   saveCashout,
   deleteCashout,
+  importCardCsv,
+  saveMerchantCategory,
+  type Spending,
   updateCashout,
   type Finance,
   type Period,
@@ -46,6 +49,7 @@ import {
 const tabs = [
   "资产总览",
   "财务全景",
+  "消费",
   "资产分布",
   "持仓明细",
   "衍生品",
@@ -656,6 +660,11 @@ export function Portfolio() {
   const [trades, setTrades] = useState<Trades | null>(null);
   const [yields, setYields] = useState<Yields | null>(null);
   const [finance, setFinance] = useState<Finance | null>(null);
+  const [spending, setSpending] = useState<Spending | null>(null);
+  const [spendOwner, setSpendOwner] = useState<"self" | "other">("self");
+  const [spendYear, setSpendYear] = useState<string | null>(null);
+  const [spendMonth, setSpendMonth] = useState<string | null>(null);
+  const [spendNote, setSpendNote] = useState("");
   const [line, setLine] = useState<"net" | "generated">("net");
   const [entry, setEntry] = useState({
     day: "",
@@ -774,6 +783,9 @@ export function Portfolio() {
         beside(readAsset<Finance>("finance", current.signal), (long) => {
           if (Array.isArray(long.points)) setFinance(long);
         }),
+        beside(readAsset<Spending>("spending", current.signal), (found) => {
+          if (Array.isArray(found.records)) setSpending(found);
+        }),
       ]);
       const [data, past] = await first;
       if (current.signal.aborted) return;
@@ -824,6 +836,55 @@ export function Portfolio() {
       await refresh();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "保存失败");
+    }
+  };
+  const spendAll = (spending?.records ?? []).filter(
+    (row) => row.counted && row.owner === spendOwner,
+  );
+  const spendLatest = spendAll[0]?.day ?? "";
+  const spendYearNow = spendYear ?? spendLatest.slice(0, 4);
+  const spendMonthNow = spendMonth ?? spendLatest.slice(5, 7);
+  const spendPrefix = spendYearNow + (spendMonthNow ? "-" + spendMonthNow : "");
+  const spendBefore = (() => {
+    if (!spendYearNow) return "";
+    if (!spendMonthNow) return String(Number(spendYearNow) - 1);
+    const month = Number(spendMonthNow) - 1;
+    return month
+      ? `${spendYearNow}-${String(month).padStart(2, "0")}`
+      : `${Number(spendYearNow) - 1}-12`;
+  })();
+  const inSpend = (prefix: string) =>
+    spendAll.filter((row) => !prefix || row.day.startsWith(prefix));
+  const spendShown = inSpend(spendPrefix);
+  const sumUsd = (list: { usd: string }[]) =>
+    list.reduce((total, row) => total + Number(row.usd), 0);
+  const byCategory = (list: { usd: string; category: string }[]) => {
+    const found = new Map<string, number>();
+    for (const row of list)
+      found.set(row.category, (found.get(row.category) ?? 0) + Number(row.usd));
+    return found;
+  };
+  const retag = async (merchant: string, current: string) => {
+    const choice = window.prompt(
+      `把「${merchant}」今后都归到哪一类？\n${(spending?.categories ?? []).join("、")}`,
+      current,
+    );
+    if (!choice || choice === current) return;
+    try {
+      await saveMerchantCategory(merchant, choice.trim());
+      await refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "分类保存失败");
+    }
+  };
+  const loadCardFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const done = await importCardCsv(await file.text());
+      setSpendNote(`已导入 ${done.rows} 行，其中新增 ${done.new} 行。`);
+      await refresh();
+    } catch (failure) {
+      setSpendNote(failure instanceof Error ? failure.message : "导入失败");
     }
   };
   // A year or month in the tables above opens its cash-outs in the list.
@@ -1602,6 +1663,213 @@ export function Portfolio() {
                     )}
                   </div>
                 </section>
+              </div>
+            )}
+            {tab === "消费" && (
+              <div className="space-y-8">
+                <div className="flex flex-wrap items-center gap-2">
+                  {(
+                    [
+                      ["self", "我自己的卡"],
+                      ["other", "我给别人付的卡"],
+                    ] as const
+                  ).map(([value, title]) => (
+                    <Button
+                      key={value}
+                      size="sm"
+                      variant={spendOwner === value ? "default" : "outline"}
+                      onClick={() => setSpendOwner(value)}
+                    >
+                      {title}
+                    </Button>
+                  ))}
+                  <label className="ml-auto cursor-pointer text-sm underline">
+                    导入 ether.fi 导出的 CSV
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      aria-label="导入卡交易记录"
+                      className="hidden"
+                      onChange={(event) => void loadCardFile(event.target.files?.[0])}
+                    />
+                  </label>
+                </div>
+                {spendNote && <p className="text-sm">{spendNote}</p>}
+                {spendAll.length === 0 ? (
+                  <p className="text-muted-foreground py-10 text-center">
+                    还没有消费记录。每月在 ether.fi 的交易记录页下载 CSV，点右上角导入。
+                  </p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                      {(
+                        [
+                          [
+                            spendMonthNow
+                              ? `${spendPrefix} 消费`
+                              : `${spendYearNow || "全部"} 年消费`,
+                            money(String(sumUsd(spendShown))),
+                          ],
+                          [
+                            `对比 ${spendBefore || "—"}`,
+                            spendBefore ? money(String(sumUsd(inSpend(spendBefore)))) : "—",
+                          ],
+                          ["笔数", String(spendShown.length)],
+                          [
+                            "返现（已赚 / 已领）",
+                            `${money(spending?.cashback_earned_usd)} / ${money(spending?.cashback_claimed_usd)}`,
+                          ],
+                        ] as const
+                      ).map(([title, value]) => (
+                        <div key={title} className="mq-stat">
+                          <p className="text-muted-foreground text-xs">{title}</p>
+                          <p className="text-xl font-semibold tabular-nums">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <select
+                        aria-label="消费年份"
+                        value={spendYearNow}
+                        onChange={(event) => setSpendYear(event.target.value)}
+                        className="border-input bg-background h-9 rounded-md border px-2"
+                      >
+                        <option value="">全部年份</option>
+                        {[...new Set(spendAll.map((row) => row.day.slice(0, 4)))].map((year) => (
+                          <option key={year} value={year}>
+                            {year} 年
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label="消费月份"
+                        value={spendMonthNow}
+                        onChange={(event) => setSpendMonth(event.target.value)}
+                        className="border-input bg-background h-9 rounded-md border px-2"
+                      >
+                        <option value="">全年</option>
+                        {Array.from({ length: 12 }, (_, index) =>
+                          String(index + 1).padStart(2, "0"),
+                        ).map((month) => (
+                          <option key={month} value={month}>
+                            {Number(month)} 月
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <section>
+                      <h3 className="mb-3 text-sm font-medium">花在哪里（对比上一期）</h3>
+                      <Pie
+                        label="消费分类"
+                        rows={[...byCategory(spendShown)]
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([name, value]) => ({
+                            label: name,
+                            value: money(String(value)),
+                            share: value > 0 ? String(value / sumUsd(spendShown)) : "0",
+                            detail: [
+                              ...spendShown
+                                .filter((row) => row.category === name)
+                                .reduce((found, row) => {
+                                  found.set(
+                                    row.description,
+                                    (found.get(row.description) ?? 0) + Number(row.usd),
+                                  );
+                                  return found;
+                                }, new Map<string, number>()),
+                            ]
+                              .sort((a, b) => b[1] - a[1])
+                              .slice(0, 5)
+                              .map(([shop, value2]) => `${shop} · ${money(String(value2))}`),
+                          }))}
+                      />
+                      <div className="mt-4">
+                        <Rows
+                          headers={["分类", "本期", "上一期", "变化"]}
+                          rows={[...byCategory(spendShown)]
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([name, value]) => {
+                              const before = byCategory(inSpend(spendBefore)).get(name) ?? 0;
+                              return [
+                                name,
+                                sortable(money(String(value)), value),
+                                spendBefore ? sortable(money(String(before)), before) : "—",
+                                spendBefore
+                                  ? sortable(money(String(value - before)), value - before)
+                                  : "—",
+                              ];
+                            })}
+                        />
+                      </div>
+                    </section>
+                    <section>
+                      <h3 className="mb-3 text-sm font-medium">按月</h3>
+                      <Rows
+                        headers={["月份", "消费", "笔数"]}
+                        rows={[...new Set(spendAll.map((row) => row.day.slice(0, 7)))].map(
+                          (month) => {
+                            const list = inSpend(month);
+                            const open = () => {
+                              setSpendYear(month.slice(0, 4));
+                              setSpendMonth(month.slice(5, 7));
+                            };
+                            return [
+                              { text: month, sort: month, act: open },
+                              sortable(money(String(sumUsd(list))), sumUsd(list)),
+                              String(list.length),
+                            ];
+                          },
+                        )}
+                      />
+                    </section>
+                    <section>
+                      <h3 className="mb-3 text-sm font-medium">
+                        消费明细（分类不对就点「改分类」，这个商户以后都按新的算）
+                      </h3>
+                      <Rows
+                        search="搜索商户、分类或卡号"
+                        headers={["日期", "商户", "美元", "原币种", "分类", "卡", ""]}
+                        rows={spendShown.map((row) => [
+                          row.day,
+                          row.description,
+                          sortable(money(row.usd), row.usd),
+                          row.orig_currency && row.orig_currency !== "USD"
+                            ? `${row.orig_amount} ${row.orig_currency}`
+                            : "—",
+                          row.category,
+                          row.card || "—",
+                          {
+                            text: "改分类",
+                            sort: 0,
+                            act: () => void retag(row.description, row.category),
+                          },
+                        ])}
+                      />
+                    </section>
+                    <section>
+                      <h3 className="mb-3 text-sm font-medium">
+                        充值核对（卡里充了多少，对照你记的出金）
+                      </h3>
+                      <Rows
+                        headers={["月份", "卡里的充值", "已记的 etherfi 出金", "差额"]}
+                        rows={(spending?.topup_check ?? []).map((row) => [
+                          row.month,
+                          sortable(money(row.topup_usd), row.topup_usd),
+                          sortable(money(row.recorded_usd), row.recorded_usd),
+                          sortable(
+                            money(row.gap_usd) +
+                              (Math.abs(Number(row.gap_usd)) > 5 ? "（对不上）" : ""),
+                            row.gap_usd,
+                          ),
+                        ])}
+                      />
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        差额大说明有充值没记进出金，或出金记在了别的名字下（只对照经由写
+                        etherfi、去向为刷卡消费的）。
+                      </p>
+                    </section>
+                  </>
+                )}
               </div>
             )}
             {tab === "资产分布" && (

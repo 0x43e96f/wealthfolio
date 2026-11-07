@@ -113,6 +113,49 @@ export async function updateCashout(
   });
   if (!response.ok) throw new Error("日期、金额或去向不对");
 }
+export interface SpendingRecord {
+  id: string;
+  day: string;
+  kind: string;
+  description: string;
+  card: string;
+  usd: string;
+  orig_amount: string;
+  orig_currency: string;
+  cashback_usd: string;
+  mcc: string;
+  status: string;
+  category: string;
+  owner: "self" | "other";
+  counted: boolean;
+}
+export interface Spending {
+  records: SpendingRecord[];
+  categories: string[];
+  cards: { card: string; owner: "self" | "other"; total_usd: string; count: number }[];
+  topup_check: { month: string; topup_usd: string; recorded_usd: string; gap_usd: string }[];
+  cashback_earned_usd: string;
+  cashback_claimed_usd: string;
+}
+async function sendSpending(path: string, method: string, body: unknown): Promise<Response> {
+  return fetch("api/assets/spending" + path, {
+    method,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+// File every purchase at one merchant under a category.
+export async function saveMerchantCategory(merchant: string, category: string): Promise<void> {
+  if (!(await sendSpending("/categories", "PUT", { merchant, category })).ok)
+    throw new Error("分类保存失败");
+}
+// Store an ether.fi card export; days already stored are not added twice.
+export async function importCardCsv(csv: string): Promise<{ rows: number; new: number }> {
+  const response = await sendSpending("/import", "POST", { csv });
+  if (!response.ok) throw new Error("不是 ether.fi 导出的交易记录");
+  return (await response.json()) as { rows: number; new: number };
+}
 // Remove one cash-out the owner entered wrongly.
 export async function deleteCashout(id: string): Promise<void> {
   const response = await fetch("api/assets/cashouts/" + encodeURIComponent(id), {
@@ -369,7 +412,8 @@ export async function readAsset<T>(
     | `history?interval=${"1h" | "4h" | "1d" | "1M"}`
     | "trades?days=365"
     | "yields"
-    | "finance",
+    | "finance"
+    | "spending",
   signal: AbortSignal,
 ): Promise<T> {
   // Relative on purpose: the page carries a <base> for the path it is mounted under.

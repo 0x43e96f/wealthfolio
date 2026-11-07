@@ -852,6 +852,88 @@ describe("private Portfolio", () => {
     );
   });
 
+  it("shows card spending for the month, keeps other people's cards apart and refiles a merchant", async () => {
+    const data = context();
+    const row = (
+      id: string,
+      day: string,
+      shop: string,
+      usd: string,
+      category: string,
+      card: string,
+      owner: "self" | "other",
+    ) => ({
+      id,
+      day,
+      kind: "spend",
+      description: shop,
+      card,
+      usd,
+      orig_amount: "28",
+      orig_currency: "CAD",
+      cashback_usd: "0.6",
+      mcc: "",
+      status: "CLEARED",
+      category,
+      owner,
+      counted: true,
+    });
+    const spending = {
+      records: [
+        row("b", "2026-10-02", "UBER CANADA/UBEREATS", "18", "餐饮", "1861", "self"),
+        row("c", "2026-10-02", "WEIXIN*Tea", "13", "其他", "1153", "other"),
+        row("a", "2026-09-30", "AMZN Mktp CA", "20", "网购", "1861", "self"),
+      ],
+      categories: ["网购", "餐饮", "家居", "其他"],
+      cards: [],
+      topup_check: [
+        { month: "2026-10", topup_usd: "500.00", recorded_usd: "400.00", gap_usd: "100.00" },
+      ],
+      cashback_earned_usd: "1.50",
+      cashback_claimed_usd: "1.00",
+    };
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        calls.push({ url, method: init?.method, body: init?.body as string });
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(
+              url.endsWith("wealthfolio/status")
+                ? { available: false }
+                : url.endsWith("spending")
+                  ? spending
+                  : url.includes("spending/")
+                    ? { ok: true }
+                    : data,
+            ),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    // Opens on the latest month with spending: only the owner's own card is in it.
+    expect(await screen.findByText("2026-10 消费")).toBeTruthy();
+    expect(screen.getByText("$18.00", { selector: "p" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "我给别人付的卡" }));
+    expect(screen.getByText("$13.00", { selector: "p" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "我自己的卡" }));
+    expect(screen.getByText("（对不上）", { exact: false })).toBeTruthy();
+    // A merchant is refiled by what the owner types.
+    vi.stubGlobal(
+      "prompt",
+      vi.fn(() => "家居"),
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: "改分类" })[0]);
+    await waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
+    const put = calls.find((call) => call.method === "PUT")!;
+    expect(put.url.endsWith("spending/categories")).toBe(true);
+    expect(JSON.parse(put.body!)).toEqual({ merchant: "UBER CANADA/UBEREATS", category: "家居" });
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {
