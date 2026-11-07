@@ -820,9 +820,10 @@ describe("private Portfolio", () => {
       note: "房租",
     });
     // The entries are listed with their notes, and one can be removed after asking.
-    // The list opens on the current month; pick the one the entry is in.
-    fireEvent.change(screen.getByLabelText("明细年份"), { target: { value: "2026" } });
-    fireEvent.change(screen.getByLabelText("明细月份"), { target: { value: "03" } });
+    // The list opens on the current month; a click on a year in the table opens that year.
+    fireEvent.click(screen.getByRole("button", { name: "2026" }));
+    expect(screen.getByLabelText<HTMLSelectElement>("明细年份").value).toBe("2026");
+    expect(screen.getByLabelText<HTMLSelectElement>("明细月份").value).toBe("");
     expect(screen.getByText("订阅年费")).toBeTruthy();
     // Editing loads the entry into the form and saves it back with a PATCH.
     fireEvent.click(screen.getByRole("button", { name: "编辑" }));

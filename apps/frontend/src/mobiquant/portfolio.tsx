@@ -826,6 +826,19 @@ export function Portfolio() {
       setError(failure instanceof Error ? failure.message : "保存失败");
     }
   };
+  // A year or month in the tables above opens its cash-outs in the list.
+  const showPeriod = (period: string) => {
+    setListYear(period.slice(0, 4));
+    setListMonth(period.length > 4 ? period.slice(5, 7) : "");
+    window.setTimeout(
+      () =>
+        document.getElementById("cashout-list")?.scrollIntoView?.({
+          behavior: "smooth",
+          block: "start",
+        }),
+      0,
+    );
+  };
   const startEdit = (row: NonNullable<Finance["records"]>[number]) => {
     setEditing(row.id);
     setEntry({
@@ -1362,17 +1375,19 @@ export function Portfolio() {
                   <h3 className="mb-3 text-sm font-medium">按年</h3>
                   <Rows
                     headers={["年份", "年末净值", "当年出金", "净值变化", "当年盈亏"]}
-                    rows={[...(finance?.yearly ?? [])]
-                      .reverse()
-                      .map((row) => [
-                        row.period,
-                        sortable(money(row.close_usd), row.close_usd),
-                        sortable(money(row.cashout_usd), row.cashout_usd),
-                        row.change_usd == null
-                          ? "—"
-                          : sortable(money(row.change_usd), row.change_usd),
-                        result(row),
-                      ])}
+                    rows={[...(finance?.yearly ?? [])].reverse().map((row) => [
+                      { text: row.period, sort: row.period, act: () => showPeriod(row.period) },
+                      sortable(money(row.close_usd), row.close_usd),
+                      {
+                        text: money(row.cashout_usd),
+                        sort: Number(row.cashout_usd) || 0,
+                        act: () => showPeriod(row.period),
+                      },
+                      row.change_usd == null
+                        ? "—"
+                        : sortable(money(row.change_usd), row.change_usd),
+                      result(row),
+                    ])}
                   />
                 </section>
                 <section>
@@ -1380,23 +1395,100 @@ export function Portfolio() {
                   <Rows
                     search="搜索月份，例如 2024"
                     headers={["月份", "月末净值", "当月出金", "净值变化", "当月盈亏"]}
-                    rows={[...(finance?.monthly ?? [])]
-                      .reverse()
-                      .map((row) => [
-                        row.period,
-                        sortable(money(row.close_usd), row.close_usd),
-                        sortable(money(row.cashout_usd), row.cashout_usd),
-                        row.change_usd == null
-                          ? "—"
-                          : sortable(money(row.change_usd), row.change_usd),
-                        result(row),
-                      ])}
+                    rows={[...(finance?.monthly ?? [])].reverse().map((row) => [
+                      { text: row.period, sort: row.period, act: () => showPeriod(row.period) },
+                      sortable(money(row.close_usd), row.close_usd),
+                      {
+                        text: money(row.cashout_usd),
+                        sort: Number(row.cashout_usd) || 0,
+                        act: () => showPeriod(row.period),
+                      },
+                      row.change_usd == null
+                        ? "—"
+                        : sortable(money(row.change_usd), row.change_usd),
+                      result(row),
+                    ])}
                   />
                   <p className="text-muted-foreground mt-2 text-xs">
                     盈亏 = 净值变化 +
                     当期出金：取走的钱是赚到的，不是亏掉的。没有记录的月份不显示。带 *
                     的那一期跨越了手工记录和自动同步的交接，两边统计的钱包不完全相同，数字不可比。
                   </p>
+                </section>
+                <section id="cashout-list">
+                  <h3 className="mb-3 text-sm font-medium">
+                    出金明细（可编辑，漏记的日期直接在上面补记）
+                  </h3>
+                  {(() => {
+                    const all = finance?.records ?? [];
+                    const years = [
+                      ...new Set([listYear, ...all.map((row) => row.day.slice(0, 4))]),
+                    ].sort((a, b) => b.localeCompare(a));
+                    const shown = all.filter(
+                      (row) =>
+                        (!listYear || row.day.startsWith(listYear)) &&
+                        (!listMonth || row.day.slice(5, 7) === listMonth),
+                    );
+                    const sum = shown.reduce((total, row) => total + Number(row.usd), 0);
+                    return (
+                      <>
+                        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                          <select
+                            aria-label="明细年份"
+                            value={listYear}
+                            onChange={(event) => setListYear(event.target.value)}
+                            className="border-input bg-background h-9 rounded-md border px-2"
+                          >
+                            <option value="">全部年份</option>
+                            {years.map((year) => (
+                              <option key={year} value={year}>
+                                {year} 年
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label="明细月份"
+                            value={listMonth}
+                            onChange={(event) => setListMonth(event.target.value)}
+                            className="border-input bg-background h-9 rounded-md border px-2"
+                          >
+                            <option value="">全部月份</option>
+                            {Array.from({ length: 12 }, (_, index) =>
+                              String(index + 1).padStart(2, "0"),
+                            ).map((month) => (
+                              <option key={month} value={month}>
+                                {Number(month)} 月
+                              </option>
+                            ))}
+                          </select>
+                          <span className="text-muted-foreground text-xs">
+                            共 {shown.length} 笔 · {money(String(sum))}
+                          </span>
+                        </div>
+                        <Rows
+                          headers={["日期", "金额", "去向", "经由", "备注", "", ""]}
+                          empty="这个时间段还没有出金记录。"
+                          rows={shown.map((row) => [
+                            row.day,
+                            sortable(money(row.usd), row.usd),
+                            places[row.destination] ?? row.destination,
+                            row.place,
+                            row.note || "—",
+                            { text: "编辑", sort: 0, act: () => startEdit(row) },
+                            {
+                              text: "删除",
+                              sort: 0,
+                              act: () =>
+                                void removeCashout(
+                                  row.id,
+                                  `${row.day} · ${money(row.usd)} · ${row.place}`,
+                                ),
+                            },
+                          ])}
+                        />
+                      </>
+                    );
+                  })()}
                 </section>
                 <section>
                   <h3 className="mb-3 text-sm font-medium">出金去了哪里</h3>
@@ -1509,81 +1601,6 @@ export function Portfolio() {
                       </Button>
                     )}
                   </div>
-                </section>
-                <section>
-                  <h3 className="mb-3 text-sm font-medium">
-                    出金明细（可编辑，漏记的日期直接在上面补记）
-                  </h3>
-                  {(() => {
-                    const all = finance?.records ?? [];
-                    const years = [
-                      ...new Set([listYear, ...all.map((row) => row.day.slice(0, 4))]),
-                    ].sort((a, b) => b.localeCompare(a));
-                    const shown = all.filter(
-                      (row) =>
-                        (!listYear || row.day.startsWith(listYear)) &&
-                        (!listMonth || row.day.slice(5, 7) === listMonth),
-                    );
-                    const sum = shown.reduce((total, row) => total + Number(row.usd), 0);
-                    return (
-                      <>
-                        <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-                          <select
-                            aria-label="明细年份"
-                            value={listYear}
-                            onChange={(event) => setListYear(event.target.value)}
-                            className="border-input bg-background h-9 rounded-md border px-2"
-                          >
-                            <option value="">全部年份</option>
-                            {years.map((year) => (
-                              <option key={year} value={year}>
-                                {year} 年
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label="明细月份"
-                            value={listMonth}
-                            onChange={(event) => setListMonth(event.target.value)}
-                            className="border-input bg-background h-9 rounded-md border px-2"
-                          >
-                            <option value="">全部月份</option>
-                            {Array.from({ length: 12 }, (_, index) =>
-                              String(index + 1).padStart(2, "0"),
-                            ).map((month) => (
-                              <option key={month} value={month}>
-                                {Number(month)} 月
-                              </option>
-                            ))}
-                          </select>
-                          <span className="text-muted-foreground text-xs">
-                            共 {shown.length} 笔 · {money(String(sum))}
-                          </span>
-                        </div>
-                        <Rows
-                          headers={["日期", "金额", "去向", "经由", "备注", "", ""]}
-                          empty="这个时间段还没有出金记录。"
-                          rows={shown.map((row) => [
-                            row.day,
-                            sortable(money(row.usd), row.usd),
-                            places[row.destination] ?? row.destination,
-                            row.place,
-                            row.note || "—",
-                            { text: "编辑", sort: 0, act: () => startEdit(row) },
-                            {
-                              text: "删除",
-                              sort: 0,
-                              act: () =>
-                                void removeCashout(
-                                  row.id,
-                                  `${row.day} · ${money(row.usd)} · ${row.place}`,
-                                ),
-                            },
-                          ])}
-                        />
-                      </>
-                    );
-                  })()}
                 </section>
               </div>
             )}
