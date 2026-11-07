@@ -71,6 +71,15 @@ export interface Finance {
     places: { place: string; usd: string }[];
   }[];
   by_year: ({ year: string } & Record<string, string>)[];
+  records: {
+    id: string;
+    day: string;
+    place: string;
+    usd: string;
+    destination: string;
+    note: string;
+    source: string;
+  }[];
   cashout_total_usd: string;
   kept_usd: string;
   note: string;
@@ -81,6 +90,7 @@ export async function saveCashout(body: {
   place: string;
   usd: string;
   destination: string;
+  note?: string;
 }): Promise<void> {
   const response = await fetch("api/assets/cashouts", {
     method: "POST",
@@ -89,6 +99,14 @@ export async function saveCashout(body: {
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error("日期、金额或去向不对");
+}
+// Remove one cash-out the owner entered wrongly.
+export async function deleteCashout(id: string): Promise<void> {
+  const response = await fetch("api/assets/cashouts/" + encodeURIComponent(id), {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!response.ok) throw new Error("删除失败");
 }
 export interface YieldRow {
   connection_id: string;

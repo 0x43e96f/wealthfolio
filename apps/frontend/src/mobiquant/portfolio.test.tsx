@@ -762,6 +762,17 @@ describe("private Portfolio", () => {
         },
       ],
       by_year: [{ year: "2026", china: "500", card: "75" }],
+      records: [
+        {
+          id: "abc",
+          day: "2026-03-01",
+          place: "bitget",
+          usd: "75",
+          destination: "card",
+          note: "订阅年费",
+          source: "manual",
+        },
+      ],
       cashout_total_usd: "575",
       kept_usd: "350",
       note: "历史为手工记录。",
@@ -778,7 +789,7 @@ describe("private Portfolio", () => {
                 ? { available: false }
                 : url.endsWith("finance")
                   ? long
-                  : url.endsWith("cashouts")
+                  : url.includes("cashouts")
                     ? { ok: true }
                     : data,
             ),
@@ -798,6 +809,7 @@ describe("private Portfolio", () => {
     fireEvent.change(screen.getByLabelText("经由"), { target: { value: "bylls" } });
     fireEvent.change(screen.getByLabelText("美元金额"), { target: { value: "1,200" } });
     fireEvent.change(screen.getByLabelText("去向"), { target: { value: "canada" } });
+    fireEvent.change(screen.getByLabelText("备注"), { target: { value: "房租" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(calls.some((call) => call.method === "POST")).toBe(true));
     expect(JSON.parse(calls.find((call) => call.method === "POST")!.body!)).toEqual({
@@ -805,7 +817,17 @@ describe("private Portfolio", () => {
       place: "bylls",
       usd: "1200",
       destination: "canada",
+      note: "房租",
     });
+    // The entries are listed with their notes, and one can be removed after asking.
+    expect(screen.getByText("订阅年费")).toBeTruthy();
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    await waitFor(() =>
+      expect(
+        calls.some((call) => call.method === "DELETE" && call.url.endsWith("cashouts/abc")),
+      ).toBe(true),
+    );
   });
 
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {

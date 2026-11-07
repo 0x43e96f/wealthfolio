@@ -37,6 +37,7 @@ import {
   saveYield,
   type Yields,
   saveCashout,
+  deleteCashout,
   type Finance,
   type Period,
 } from "./client";
@@ -655,7 +656,7 @@ export function Portfolio() {
   const [yields, setYields] = useState<Yields | null>(null);
   const [finance, setFinance] = useState<Finance | null>(null);
   const [line, setLine] = useState<"net" | "generated">("net");
-  const [entry, setEntry] = useState({ day: "", place: "", usd: "", destination: "china" });
+  const [entry, setEntry] = useState({ day: "", place: "", usd: "", destination: "china", note: "" });
   const [bar, setBar] = useState<(typeof bars)[number][0]>("1d");
   const [curve, setCurve] = useState<History | null>(null);
   // The curve's own reading, at whichever bar size is chosen. The daily series
@@ -806,10 +807,19 @@ export function Portfolio() {
   const addCashout = async () => {
     try {
       await saveCashout({ ...entry, usd: entry.usd.replace(/,/g, "").trim() });
-      setEntry({ day: "", place: "", usd: "", destination: entry.destination });
+      setEntry({ day: "", place: "", usd: "", destination: entry.destination, note: "" });
       await refresh();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "保存失败");
+    }
+  };
+  const removeCashout = async (id: string, label: string) => {
+    if (!window.confirm(`删除这笔出金？\n${label}\n删除后累计出金和各项统计会重新计算。`)) return;
+    try {
+      await deleteCashout(id);
+      await refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "删除失败");
     }
   };
   // The long curve reuses the balance chart: one reading per day that has one.
@@ -1430,6 +1440,14 @@ export function Portfolio() {
                         </option>
                       ))}
                     </select>
+                    <input
+                      aria-label="备注"
+                      placeholder="备注（做什么用，可不填）"
+                      maxLength={200}
+                      value={entry.note}
+                      onChange={(event) => setEntry({ ...entry, note: event.target.value })}
+                      className="border-input bg-background h-9 w-64 rounded-md border px-2"
+                    />
                     <Button
                       size="sm"
                       disabled={!entry.day || !entry.place || !entry.usd}
@@ -1438,6 +1456,29 @@ export function Portfolio() {
                       保存
                     </Button>
                   </div>
+                </section>
+                <section>
+                  <h3 className="mb-3 text-sm font-medium">出金明细</h3>
+                  <Rows
+                    headers={["日期", "金额", "去向", "经由", "备注", ""]}
+                    empty="还没有出金记录。"
+                    rows={(finance?.records ?? []).map((row) => [
+                      row.day,
+                      sortable(money(row.usd), row.usd),
+                      places[row.destination] ?? row.destination,
+                      row.place,
+                      row.note || "—",
+                      {
+                        text: "删除",
+                        sort: 0,
+                        act: () =>
+                          void removeCashout(
+                            row.id,
+                            `${row.day} · ${money(row.usd)} · ${row.place}`,
+                          ),
+                      },
+                    ])}
+                  />
                 </section>
               </div>
             )}
