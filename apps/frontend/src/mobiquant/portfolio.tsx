@@ -1313,6 +1313,17 @@ export function Portfolio() {
                         {title}
                       </Button>
                     ))}
+                    <Button
+                      size="sm"
+                      className="ml-auto"
+                      onClick={() => {
+                        const form = document.getElementById("cashout-form");
+                        form?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+                        document.getElementById("cashout-day")?.focus();
+                      }}
+                    >
+                      ＋ 记一笔出金
+                    </Button>
                   </div>
                   {longLine.length > 0 && !hidden && <Trend points={longLine} money={money} />}
                   <p className="text-muted-foreground text-xs">
@@ -1403,11 +1414,12 @@ export function Portfolio() {
                       ])}
                   />
                 </section>
-                <section>
+                <section id="cashout-form">
                   <h3 className="mb-3 text-sm font-medium">记一笔新的出金</h3>
                   <div className="flex flex-wrap items-end gap-2 text-sm">
                     <input
                       type="date"
+                      id="cashout-day"
                       aria-label="出金日期"
                       value={entry.day}
                       onChange={(event) => setEntry({ ...entry, day: event.target.value })}
