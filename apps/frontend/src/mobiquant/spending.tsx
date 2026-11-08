@@ -547,25 +547,25 @@ export function SpendingTab({
           {chart === "走势" && !tripMode && (
             <span className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               <span className="inline-flex items-center gap-1">
-                <span aria-hidden className="bg-chart-1 inline-block h-0.5 w-4" />
+                <span aria-hidden className="bg-chart-1 inline-block h-3 w-1.5 rounded-sm" />
                 每月
               </span>
               <span className="inline-flex items-center gap-1">
                 <span
                   aria-hidden
-                  className="border-muted-foreground inline-block w-4 border-t border-dashed"
+                  className="border-foreground/60 inline-block w-4 border-t border-dashed"
                 />
                 平常（前 {USUAL_MONTHS} 个月中位数）
               </span>
               <span className="inline-flex items-center gap-1">
-                <span aria-hidden className="bg-destructive inline-block h-2 w-2 rounded-full" />
+                <span aria-hidden className="bg-destructive inline-block h-3 w-1.5 rounded-sm" />
                 超过平常 {HIGH_RATIO} 倍
               </span>
               <span
                 className="inline-flex items-center gap-1"
                 title={[...FIXED_CATEGORIES].join("、")}
               >
-                <span aria-hidden className="bg-chart-4 inline-block h-2 w-3 opacity-60" />
+                <span aria-hidden className="bg-chart-4 inline-block h-1.5 w-1.5" />
                 固定支出
               </span>
             </span>

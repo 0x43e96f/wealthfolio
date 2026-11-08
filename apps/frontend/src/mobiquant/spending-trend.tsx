@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
-// Spending month by month as one line. Each month's usual level is the median of the
-// twelve months before it (a dashed line); months well above theirs are marked. Pointing
-// at the line shows that month's figure at once; clicking (or Enter) opens that month.
+// Spending month by month as thin columns. A month's fixed part sits at the bottom in its
+// own colour, the rest above it, in the warning colour when the month is well above its
+// usual level (the median of the twelve months before, a dashed step line). Over several
+// years each year is named under its months with its total. Pointing at a month shows
+// its figures at once; clicking (or Enter) opens that month.
 
 export interface TrendPoint {
   key: string; // YYYY-MM
@@ -12,9 +14,11 @@ export interface TrendPoint {
 }
 
 const HEIGHT = 200;
-const PAD_X = 10;
+const PAD_X = 8;
+const PAD_LEFT = 44; // room for the gridline amounts
 const PAD_TOP = 14;
-const PAD_BOTTOM = 6;
+const PAD_BOTTOM = 4;
+const GAP = "　"; // the site's separator between items on one line
 export const HIGH_RATIO = 1.5; // a month this many times the usual one is marked
 export const USUAL_MONTHS = 12;
 const USUAL_AT_LEAST = 6; // fewer months before than this and there is no usual level
@@ -37,6 +41,10 @@ export function median(values: number[]): number {
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
+
+// $12k, $3.4k, $850: for gridlines and year totals, where the cents are noise.
+const short = (usd: number) =>
+  usd >= 1000 ? `$${(usd / 1000).toFixed(usd >= 10_000 ? 0 : 1)}k` : `$${Math.round(usd)}`;
 
 export function SpendingTrend({
   points,
@@ -72,28 +80,42 @@ export function SpendingTrend({
     return <p className="text-muted-foreground py-6 text-center text-sm">这个范围里没有消费。</p>;
 
   const top = Math.max(1, ...points.map((point) => Math.max(point.usd, point.usual ?? 0))) * 1.08;
-  const x = (index: number) =>
-    points.length > 1 ? PAD_X + (index * (width - 2 * PAD_X)) / (points.length - 1) : width / 2;
+  const step = (width - PAD_LEFT - PAD_X) / points.length;
+  const bar = Math.max(2, Math.min(step - 2, 28));
+  const x = (index: number) => PAD_LEFT + step * (index + 0.5);
   const y = (usd: number) =>
     HEIGHT - PAD_BOTTOM - (Math.max(0, usd) / top) * (HEIGHT - PAD_TOP - PAD_BOTTOM);
-  const line = points.map((point, index) => `${x(index).toFixed(1)},${y(point.usd).toFixed(1)}`);
   const high = (point: TrendPoint) =>
     (point.usual ?? 0) > 0 && point.usd > (point.usual ?? 0) * HIGH_RATIO && point.key !== running;
-  // The usual line, broken where a month has none.
+
+  // The usual level as steps across each month, broken where a month has none.
   const usualRuns: string[][] = [];
   points.forEach((p, index) => {
-    if (p.usual == null) return void usualRuns.push([]);
+    if (p.usual == null) {
+      usualRuns.push([]);
+      return;
+    }
+    const edges = [
+      `${(x(index) - step / 2).toFixed(1)},${y(p.usual).toFixed(1)}`,
+      `${(x(index) + step / 2).toFixed(1)},${y(p.usual).toFixed(1)}`,
+    ];
     const run = usualRuns[usualRuns.length - 1];
-    const at = `${x(index).toFixed(1)},${y(p.usual).toFixed(1)}`;
-    if (run) run.push(at);
-    else usualRuns.push([at]);
+    if (run) run.push(...edges);
+    else usualRuns.push(edges);
   });
-  const step = points.length > 1 ? (width - 2 * PAD_X) / (points.length - 1) : width;
+
+  // Three quiet gridlines at round amounts.
+  const unit = (() => {
+    const raw = top / 3;
+    const power = 10 ** Math.floor(Math.log10(raw));
+    return [1, 2, 5, 10].map((m) => m * power).find((m) => m >= raw) ?? raw;
+  })();
+  const grid = [1, 2, 3].map((k) => k * unit).filter((usd) => usd < top);
 
   // The chosen months as shaded spans (runs of consecutive months).
   const spans: { from: number; to: number }[] = [];
   points.forEach((point, index) => {
-    if (!chosen(point.key)) return;
+    if (!chosen(point.key) || points.every((p) => chosen(p.key))) return;
     const last = spans[spans.length - 1];
     if (last && last.to === index - 1) last.to = index;
     else spans.push({ from: index, to: index });
@@ -103,8 +125,7 @@ export function SpendingTrend({
     const rect = element.getBoundingClientRect();
     if (!rect.width) return null;
     const drawn = ((clientX - rect.left) / rect.width) * width;
-    const ratio = Math.min(1, Math.max(0, (drawn - PAD_X) / (width - 2 * PAD_X)));
-    return Math.round(ratio * (points.length - 1));
+    return Math.min(points.length - 1, Math.max(0, Math.floor((drawn - PAD_LEFT) / step)));
   };
   const point = (event: PointerEvent<SVGSVGElement>) =>
     setAt(nearest(event.clientX, event.currentTarget));
@@ -125,11 +146,20 @@ export function SpendingTrend({
     if (ratio <= 0.95) return `比平常少 ${Math.round((1 - ratio) * 100)}%`;
     return "和平常差不多";
   };
-  // Year names under the line when it spans years, month numbers when it is one year.
+  // Over several years: each year named under its months with its total, and a hairline
+  // between years. Inside one year: the month numbers.
   const many = points.length > 14;
-  const ticks = points
-    .map((p, index) => ({ index, key: p.key }))
-    .filter(({ key, index }) => (many ? key.endsWith("-01") || index === 0 : true));
+  const years = many
+    ? [...new Set(points.map((p) => p.key.slice(0, 4)))].map((year) => {
+        const indices = points.flatMap((p, index) => (p.key.startsWith(year) ? [index] : []));
+        return {
+          year,
+          first: indices[0],
+          middle: (x(indices[0]) + x(indices[indices.length - 1])) / 2,
+          usd: indices.reduce((sum, index) => sum + points[index].usd, 0),
+        };
+      })
+    : [];
 
   return (
     <div ref={box} className="relative">
@@ -150,35 +180,74 @@ export function SpendingTrend({
           <rect
             key={span.from}
             x={x(span.from) - step / 2}
-            width={Math.max(step, 2) * (span.to - span.from + 1)}
+            width={step * (span.to - span.from + 1)}
             y={0}
             height={HEIGHT}
             fill="var(--muted)"
           />
         ))}
-        {points.length > 1 && (
-          <>
-            <polygon
-              points={`${x(0).toFixed(1)},${y(0)} ${line.join(" ")} ${x(points.length - 1).toFixed(1)},${y(0)}`}
-              fill="var(--chart-1)"
-              fillOpacity="0.15"
+        {grid.map((usd) => (
+          <g key={usd}>
+            <line
+              x1={PAD_LEFT}
+              x2={width - PAD_X}
+              y1={y(usd)}
+              y2={y(usd)}
+              stroke="var(--border)"
+              strokeOpacity="0.6"
             />
-            <polyline
-              points={line.join(" ")}
-              fill="none"
-              stroke="var(--chart-1)"
-              strokeWidth="2"
-              strokeLinejoin="round"
-            />
-            <polygon
-              points={`${x(0).toFixed(1)},${y(0)} ${points
-                .map((p, index) => `${x(index).toFixed(1)},${y(p.fixed).toFixed(1)}`)
-                .join(" ")} ${x(points.length - 1).toFixed(1)},${y(0)}`}
-              fill="var(--chart-4)"
-              fillOpacity="0.55"
-            />
-          </>
-        )}
+            <text
+              x={PAD_LEFT - 6}
+              y={y(usd) + 4}
+              textAnchor="end"
+              fontSize="11"
+              fill="var(--muted-foreground)"
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {short(usd)}
+            </text>
+          </g>
+        ))}
+        {years.slice(1).map(({ year, first }) => (
+          <line
+            key={year}
+            x1={x(first) - step / 2}
+            x2={x(first) - step / 2}
+            y1={PAD_TOP}
+            y2={y(0)}
+            stroke="var(--border)"
+          />
+        ))}
+        {points.map((p, index) => {
+          const left = x(index) - bar / 2;
+          return (
+            <g key={p.key} opacity={at != null && at !== index ? 0.7 : 1}>
+              <rect
+                x={left}
+                width={bar}
+                y={y(p.usd)}
+                height={Math.max(0, y(p.fixed) - y(p.usd))}
+                rx={Math.min(2, bar / 2)}
+                fill={high(p) ? "var(--destructive)" : "var(--chart-1)"}
+              />
+              <rect
+                x={left}
+                width={bar}
+                y={y(p.fixed)}
+                height={Math.max(0, y(0) - y(p.fixed))}
+                fill="var(--chart-4)"
+              />
+            </g>
+          );
+        })}
+        <line
+          x1={PAD_LEFT}
+          x2={width - PAD_X}
+          y1={y(0)}
+          y2={y(0)}
+          stroke="var(--muted-foreground)"
+          strokeOpacity="0.5"
+        />
         {usualRuns
           .filter((run) => run.length > 1)
           .map((run) => (
@@ -186,48 +255,24 @@ export function SpendingTrend({
               key={run[0]}
               points={run.join(" ")}
               fill="none"
-              stroke="var(--muted-foreground)"
-              strokeDasharray="5 5"
+              stroke="var(--foreground)"
+              strokeOpacity="0.55"
+              strokeDasharray="4 3"
             />
           ))}
-        {points.map((p, index) =>
-          high(p) ? (
-            <circle key={p.key} cx={x(index)} cy={y(p.usd)} r="4" fill="var(--destructive)" />
-          ) : null,
-        )}
-        {hovered && at != null && (
-          <>
-            <line
-              x1={x(at)}
-              x2={x(at)}
-              y1={0}
-              y2={HEIGHT}
-              stroke="var(--muted-foreground)"
-              strokeOpacity="0.5"
-            />
-            <circle
-              cx={x(at)}
-              cy={y(hovered.usd)}
-              r="5"
-              fill="var(--chart-1)"
-              stroke="var(--background)"
-              strokeWidth="2"
-            />
-          </>
-        )}
       </svg>
       {hovered && at != null && (
         <div
           role="status"
           className="bg-popover text-popover-foreground pointer-events-none absolute top-1 z-10 whitespace-nowrap rounded-md border px-2 py-1 text-xs shadow-md"
           style={{
-            left: Math.min(Math.max(x(at), 70), width - 70),
+            left: Math.min(Math.max(x(at), 90), width - 90),
             transform: "translateX(-50%)",
           }}
         >
           <p className="font-medium tabular-nums">
             {hovered.key}
-            {"　"}
+            {GAP}
             {money(hovered.usd)}
           </p>
           <p className="text-muted-foreground">
@@ -235,21 +280,33 @@ export function SpendingTrend({
           </p>
           <p className="text-muted-foreground tabular-nums">
             固定 {money(hovered.fixed)}
-            {"\u3000"}其余 {money(hovered.usd - hovered.fixed)}
+            {GAP}其余 {money(hovered.usd - hovered.fixed)}
           </p>
         </div>
       )}
-      <div className="text-muted-foreground relative h-4 text-xs tabular-nums">
-        {ticks.map(({ index, key }) => (
-          <span
-            key={key}
-            className="absolute -translate-x-1/2"
-            style={{ left: Math.min(Math.max(x(index), 14), width - 14) }}
-          >
-            {many ? key.slice(0, 4) : Number(key.slice(5))}
-          </span>
-        ))}
-      </div>
+      {many ? (
+        <div className="text-muted-foreground relative h-8 text-xs tabular-nums">
+          {years.map(({ year, middle, usd }) => (
+            <span
+              key={year}
+              className="absolute -translate-x-1/2 text-center leading-tight"
+              style={{ left: middle }}
+            >
+              {year}
+              <br />
+              <span className="text-foreground">{short(usd)}</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="text-muted-foreground relative h-4 text-xs tabular-nums">
+          {points.map((p, index) => (
+            <span key={p.key} className="absolute -translate-x-1/2" style={{ left: x(index) }}>
+              {Number(p.key.slice(5))}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
