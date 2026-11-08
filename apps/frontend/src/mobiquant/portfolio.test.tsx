@@ -1252,6 +1252,90 @@ describe("private Portfolio", () => {
     expect(names()).toEqual(["吃喝", "购物"]);
   });
 
+  it("shows the fixed floor, the groups' shares per year and the trips side by side", async () => {
+    const spending = {
+      records: [
+        spendRow("a", "2026-07-14", "WESTJET", "600", "交通出行", [
+          { kind: "旅行", value: "纽芬兰自驾" },
+        ]),
+        spendRow("b", "2026-07-15", "TAVERN", "60", "餐饮", [
+          { kind: "旅行", value: "纽芬兰自驾" },
+        ]),
+        spendRow("c", "2026-08-02", "HOTEL", "300", "旅行娱乐", [{ kind: "旅行", value: "泰国" }]),
+        spendRow("d", "2026-07-01", "OPENAI", "20", "订阅与软件"),
+        spendRow("e", "2025-07-01", "HOME DINER", "40", "餐饮"),
+      ],
+      trips: [
+        {
+          id: "t1",
+          name: "纽芬兰自驾",
+          start_day: "2026-07-11",
+          end_day: "2026-07-20",
+          note: "",
+          total_usd: "660",
+          count: 2,
+          categories: {},
+        },
+        {
+          id: "t2",
+          name: "泰国",
+          start_day: "2026-08-01",
+          end_day: "2026-08-03",
+          note: "",
+          total_usd: "300",
+          count: 1,
+          categories: {},
+        },
+      ],
+      categories: ["餐饮", "交通出行", "旅行娱乐", "订阅与软件"],
+      groups: {
+        order: ["吃喝", "交通与玩乐", "生活与账单"],
+        of: {
+          餐饮: "吃喝",
+          交通出行: "交通与玩乐",
+          旅行娱乐: "交通与玩乐",
+          订阅与软件: "生活与账单",
+        },
+      },
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    // The floor of fixed spending is in the month's figure on the trend.
+    const chart = await screen.findByRole("img", { name: /每月消费走势/ });
+    fireEvent.keyDown(chart, { key: "ArrowLeft" });
+    expect(screen.getByRole("status").textContent).toContain("2026-07");
+    expect(screen.getByRole("status").textContent).toContain("固定 $20.00");
+    fireEvent.blur(chart);
+    // One bar a year; pointing at it lists its groups.
+    const mix = within(screen.getByLabelText("大类构成"));
+    const year2026 = mix.getByRole("img", { name: /^2026 \$980\.00/ });
+    fireEvent.focus(year2026);
+    expect(mix.getByLabelText("大类构成明细").textContent).toContain("交通与玩乐$900.00");
+    fireEvent.click(mix.getByRole("button", { name: "只看吃喝" }));
+    expect(totalShown("$100.00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "清除类别和标签" }));
+    // The trips: newest first, then by cost per day.
+    const trips = within(screen.getByLabelText("旅行对比"));
+    const names = () =>
+      trips
+        .getAllByRole("button")
+        .map((button) => button.textContent)
+        .filter((text) => text === "纽芬兰自驾" || text === "泰国");
+    expect(names()).toEqual(["泰国", "纽芬兰自驾"]);
+    expect(trips.getByText("10 天，每天 $66.00")).toBeTruthy();
+    fireEvent.click(trips.getByRole("button", { name: "按合计" }));
+    expect(names()).toEqual(["纽芬兰自驾", "泰国"]);
+    fireEvent.click(trips.getByRole("button", { name: "按每天" }));
+    expect(names()).toEqual(["泰国", "纽芬兰自驾"]);
+    fireEvent.click(trips.getByRole("button", { name: "纽芬兰自驾" }));
+    expect(totalShown("$660.00")).toBeTruthy();
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {

@@ -8,6 +8,7 @@ export interface TrendPoint {
   key: string; // YYYY-MM
   usd: number;
   usual: number | null; // median of the twelve months before; null with too few of them
+  fixed: number; // the part that comes every month whatever happens (rent, subscriptions …)
 }
 
 const HEIGHT = 200;
@@ -19,7 +20,7 @@ export const USUAL_MONTHS = 12;
 const USUAL_AT_LEAST = 6; // fewer months before than this and there is no usual level
 
 // The usual level of each month of a gapless monthly series.
-export function withUsual(series: { key: string; usd: number }[]): TrendPoint[] {
+export function withUsual(series: { key: string; usd: number; fixed: number }[]): TrendPoint[] {
   return series.map((point, index) => {
     const earlier = series.slice(Math.max(0, index - USUAL_MONTHS), index).map((p) => p.usd);
     return { ...point, usual: earlier.length >= USUAL_AT_LEAST ? median(earlier) : null };
@@ -165,6 +166,13 @@ export function SpendingTrend({
               strokeWidth="2"
               strokeLinejoin="round"
             />
+            <polygon
+              points={`${x(0).toFixed(1)},${y(0)} ${points
+                .map((p, index) => `${x(index).toFixed(1)},${y(p.fixed).toFixed(1)}`)
+                .join(" ")} ${x(points.length - 1).toFixed(1)},${y(0)}`}
+              fill="var(--chart-4)"
+              fillOpacity="0.55"
+            />
           </>
         )}
         {usualRuns
@@ -220,6 +228,10 @@ export function SpendingTrend({
           </p>
           <p className="text-muted-foreground">
             {hovered.key === running ? "这个月还没过完" : versus(hovered.usd, hovered.usual)}
+          </p>
+          <p className="text-muted-foreground tabular-nums">
+            固定 {money(hovered.fixed)}
+            {"\u3000"}其余 {money(hovered.usd - hovered.fixed)}
           </p>
         </div>
       )}

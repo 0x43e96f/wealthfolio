@@ -12,7 +12,9 @@ import {
 } from "./client";
 import { Ledger, tagsOf, tagText, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
+import { SpendingMix, type MixRow } from "./spending-mix";
 import { MonthExplained } from "./spending-month";
+import { TripCompare } from "./spending-trips";
 import { HIGH_RATIO, SpendingTrend, USUAL_MONTHS, withUsual } from "./spending-trend";
 
 // The 消费 tab. Four drop-downs choose what is counted: a year, a month, any number of
@@ -41,6 +43,9 @@ const START: View = {
 // spending moves, so 日常 leaves it out.
 const BIG_USD = 1000;
 const TRANSFER_GROUP = "转账";
+// What comes every month whatever happens: the floor under the spending line.
+// 教育培训 is left out: it comes once, in big sums.
+const FIXED_CATEGORIES = new Set(["房租", "订阅与软件", "保险", "卡费用", "公司事务"]);
 const EMPTY_TRIP = { id: null as string | null, name: "", start_day: "", end_day: "", note: "" };
 const SPLIT_ROWS = 40;
 
@@ -276,9 +281,14 @@ export function SpendingTab({
   const thisMonth = todayDay.slice(0, 7);
   const trend = (() => {
     const found = new Map<string, number>();
-    for (const row of filteredAll) addTo(found, row.day.slice(0, 7), Number(row.usd));
-    const firstData = all.length ? all[all.length - 1].day.slice(0, 7) : thisMonth;
-    const lastData = all.length ? all[0].day.slice(0, 7) : thisMonth;
+    const fixed = new Map<string, number>();
+    for (const row of filteredAll) {
+      addTo(found, row.day.slice(0, 7), Number(row.usd));
+      if (FIXED_CATEGORIES.has(row.category)) addTo(fixed, row.day.slice(0, 7), Number(row.usd));
+    }
+    const days = all.map((row) => row.day).sort();
+    const firstData = days.length ? days[0].slice(0, 7) : thisMonth;
+    const lastData = days.length ? days[days.length - 1].slice(0, 7) : thisMonth;
     const picked = [...view.years].sort();
     const from = picked.length ? `${picked[0]}-01` : firstData;
     const to = picked.length ? [`${picked[picked.length - 1]}-12`, lastData].sort()[0] : lastData;
@@ -289,10 +299,39 @@ export function SpendingTab({
       m += 1;
       if (m > 12) [y, m] = [y + 1, 1];
     }
-    return withUsual(keys.map((key) => ({ key, usd: found.get(key) ?? 0 }))).filter(
-      (point) => point.key >= from,
-    );
+    return withUsual(
+      keys.map((key) => ({ key, usd: found.get(key) ?? 0, fixed: fixed.get(key) ?? 0 })),
+    ).filter((point) => point.key >= from);
   })();
+  // The groups' shares: per month inside one year, per year otherwise (oldest first).
+  const groupOrder = [
+    ...new Set([...(spending.groups?.order ?? []), ...counted.map((row) => groupOf(row.category))]),
+  ];
+  const mixRows: MixRow[] = (() => {
+    const slot = year ? 7 : 4;
+    const found = new Map<string, Map<string, number>>();
+    for (const row of filteredAll) {
+      const key = row.day.slice(0, slot);
+      if (year ? !key.startsWith(year) : chosenYears.size > 0 && !chosenYears.has(key)) continue;
+      const parts = found.get(key) ?? new Map<string, number>();
+      addTo(parts, groupOf(row.category), Number(row.usd));
+      found.set(key, parts);
+    }
+    return [...found.keys()].sort().map((key) => {
+      const parts = found.get(key) ?? new Map<string, number>();
+      return {
+        key,
+        label: year ? `${Number(key.slice(5))} 月` : key,
+        parts,
+        total: [...parts.values()].reduce((sum, usd) => sum + usd, 0),
+      };
+    });
+  })();
+  const pickGroup = (group: string) =>
+    go({
+      categories: categoryNodes.find((node) => node.key === group)?.leaves.map((l) => l.key) ?? [],
+      merchant: "",
+    });
   const inChosen = (key: string) =>
     Boolean(prefix || chosenYears.size) &&
     (prefix ? key.startsWith(prefix) : chosenYears.has(key.slice(0, 4)));
@@ -507,7 +546,8 @@ export function SpendingTab({
         <h3 className="mb-2 text-sm font-medium">
           每月走势
           <span className="text-muted-foreground ml-2 text-xs font-normal tabular-nums">
-            虚线是每个月前 {USUAL_MONTHS} 个月的中位数，红点是超过它 {HIGH_RATIO} 倍的月份
+            虚线是每个月前 {USUAL_MONTHS} 个月的中位数，红点是超过它 {HIGH_RATIO}{" "}
+            倍的月份，底部深色是固定支出（{[...FIXED_CATEGORIES].join("、")}）
           </span>
         </h3>
         <SpendingTrend
@@ -594,6 +634,21 @@ export function SpendingTab({
             )}
           </section>
         )}
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <section aria-label="大类构成">
+          <h3 className="mb-2 text-sm font-medium">
+            大类构成（{year ? `${year} 年每月` : "每年"}）
+          </h3>
+          <SpendingMix rows={mixRows} groups={groupOrder} money={moneyText} onGroup={pickGroup} />
+        </section>
+        <TripCompare
+          rows={period.filter((row) => catOk(row) && merchantOk(row))}
+          trips={trips}
+          money={moneyText}
+          onPick={(name) => go({ tags: [keyOf({ kind: "旅行", value: name })] })}
+        />
       </div>
 
       <Ledger
