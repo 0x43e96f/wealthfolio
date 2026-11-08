@@ -1114,6 +1114,70 @@ describe("private Portfolio", () => {
     expect(screen.getByRole("button", { name: "购物" })).toBeTruthy();
   });
 
+  it("leaves transfers and one-off purchases out of 日常 and says what was left", async () => {
+    const spending = {
+      records: [
+        spendRow("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
+        spendRow("c", "2026-10-03", "LAPTOP", "1500", "网购"),
+        spendRow("d", "2026-10-04", "E-TRANSFER", "200", "转账"),
+      ],
+      categories: ["网购", "餐饮", "转账"],
+      groups: { order: ["吃喝", "购物", "转账"], of: { 餐饮: "吃喝", 网购: "购物", 转账: "转账" } },
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    expect(await screen.findByText("$1,718.00", { selector: "p.text-3xl" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "日常" }));
+    expect(totalShown("$18.00")).toBeTruthy();
+    expect(screen.getByText("日常没算进去的", { exact: false }).textContent).toContain(
+      "转账 $200.00（1 笔），单笔超过 $1,000.00 的 $1,500.00（1 笔）",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "全部" }));
+    expect(totalShown("$1,718.00")).toBeTruthy();
+  });
+
+  it("sets a running month against the same days of the month before, part by part", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-07T12:00:00"));
+    try {
+      const spending = {
+        records: [
+          spendRow("a", "2026-11-03", "UBER EATS", "30", "餐饮"),
+          spendRow("b", "2026-10-05", "UBER EATS", "10", "餐饮"),
+          spendRow("c", "2026-10-06", "AMZN", "50", "网购"),
+          spendRow("d", "2026-10-20", "UBER EATS", "500", "餐饮"),
+        ],
+        categories: ["网购", "餐饮"],
+        groups,
+        cards: [],
+        topup_check: [],
+        cashback_earned_usd: "0",
+        cashback_claimed_usd: "0",
+      };
+      stubSpending(spending, []);
+      render(<Portfolio />);
+      fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+      fireEvent.click(await screen.findByLabelText("年份筛选"));
+      fireEvent.click(await screen.findByRole("checkbox", { name: "2026 年" }));
+      fireEvent.change(screen.getByLabelText("消费月份"), { target: { value: "11" } });
+      expect(totalShown("$30.00")).toBeTruthy();
+      // October 20 is past the 7th, so it is not in the comparison.
+      expect(screen.getByText("2026-10 同期（1–7 日）：$60.00", { exact: false })).toBeTruthy();
+      // Each part carries its own change; 购物 was spent before and not now.
+      const groupsSplit = within(screen.getByLabelText("按大类"));
+      expect(groupsSplit.getByText("多 $20.00", { exact: false })).toBeTruthy();
+      expect(groupsSplit.getByText("购物")).toBeTruthy();
+      expect(groupsSplit.getByText("少 $50.00", { exact: false })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {

@@ -14,9 +14,10 @@ import { Ledger, tagsOf, tagText, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
 
 // The 消费 tab. Four drop-downs choose what is counted: a year, a month, any number of
-// categories and any number of tags (a trip, a means of transport, 订阅 …). Everything
-// below adds up only what they leave: the total, how it splits by the chosen tags and by
-// category, the bars over time, and every row of it.
+// categories and any number of tags (a trip, a means of transport, 订阅 …), and 日常 /
+// 全部 whether transfers and one-off big purchases count. Everything below adds up only
+// what they leave: the total, how it splits by the chosen tags and by category (each
+// against the period before), the bars over time, and every row of it.
 
 interface View {
   years: string[]; // empty = every year
@@ -24,8 +25,20 @@ interface View {
   categories: string[]; // fine categories; empty = all
   tags: string[]; // tag keys (see keyOf); empty = no tag filter; a row needs any one
   merchant: string;
+  everyday: boolean; // leave out transfers and single purchases above BIG_USD
 }
-const START: View = { years: [], month: "", categories: [], tags: [], merchant: "" };
+const START: View = {
+  years: [],
+  month: "",
+  categories: [],
+  tags: [],
+  merchant: "",
+  everyday: false,
+};
+// A purchase above this is a one-off (a laptop, a flight): it hides how everyday
+// spending moves, so 日常 leaves it out.
+const BIG_USD = 1000;
+const TRANSFER_GROUP = "转账";
 const EMPTY_TRIP = { id: null as string | null, name: "", start_day: "", end_day: "", note: "" };
 const SPLIT_ROWS = 40;
 
@@ -70,7 +83,14 @@ export function SpendingTab({
   }, []);
 
   const groupOf = (category: string) => spending.groups?.of[category] ?? category;
-  const all = useMemo(() => spending.records.filter((row) => row.counted), [spending.records]);
+  const counted = useMemo(() => spending.records.filter((row) => row.counted), [spending.records]);
+  const oneOff = (row: SpendingRecord) =>
+    groupOf(row.category) === TRANSFER_GROUP || Number(row.usd) > BIG_USD;
+  const all = useMemo(
+    () => (view.everyday ? counted.filter((row) => !oneOff(row)) : counted),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [counted, view.everyday, spending.groups],
+  );
   const years = [...new Set(all.map((row) => row.day.slice(0, 4)))].sort().reverse();
   // One chosen year opens its months, the comparison with the year before and the
   // monthly bars; several years are simply added up.
@@ -84,6 +104,21 @@ export function SpendingTab({
     const last = Number(month) - 1;
     return last ? `${year}-${String(last).padStart(2, "0")}` : `${Number(year) - 1}-12`;
   })();
+  // A period still running (this month, this year) is set against the same days of the
+  // one before: 7 days of November against all of October would read as a fall.
+  const today = new Date();
+  const todayDay = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const running = Boolean(prefix) && todayDay.startsWith(prefix);
+  const sameSpan = (row: SpendingRecord) =>
+    !running ||
+    (month ? row.day.slice(8) <= todayDay.slice(8) : row.day.slice(5) <= todayDay.slice(5));
+  const beforeName = !before
+    ? ""
+    : !running
+      ? before
+      : month
+        ? `${before} 同期（1–${Number(todayDay.slice(8))} 日）`
+        : `${before} 同期（到 ${Number(todayDay.slice(5, 7))} 月 ${Number(todayDay.slice(8))} 日）`;
   const periodName =
     view.years.length === 0
       ? "全部年份"
@@ -107,9 +142,24 @@ export function SpendingTab({
   );
   const shown = period.filter((row) => catOk(row) && tagOk(row) && merchantOk(row));
   const sum = total(shown);
-  const previous = before
-    ? total(inPeriod(before).filter((row) => catOk(row) && tagOk(row) && merchantOk(row)))
-    : 0;
+  const beforeRows = before
+    ? inPeriod(before).filter((row) => sameSpan(row) && catOk(row) && tagOk(row) && merchantOk(row))
+    : [];
+  const previous = total(beforeRows);
+  // What 日常 leaves out of this same scope, so the owner sees it is not lost.
+  const left = view.everyday
+    ? counted.filter(
+        (row) =>
+          oneOff(row) &&
+          (!prefix || row.day.startsWith(prefix)) &&
+          (chosenYears.size === 0 || chosenYears.has(row.day.slice(0, 4))) &&
+          catOk(row) &&
+          tagOk(row) &&
+          merchantOk(row),
+      )
+    : [];
+  const leftTransfers = left.filter((row) => groupOf(row.category) === TRANSFER_GROUP);
+  const leftBig = left.filter((row) => groupOf(row.category) !== TRANSFER_GROUP);
 
   // The category menu: groups over their categories, with the money each holds under the
   // other filters. Every category ever used is listed, so a choice never disappears.
@@ -173,7 +223,12 @@ export function SpendingTab({
       const mine = shown.filter((row) =>
         tagsOf(row).some((t) => t.kind === tag.kind && t.value === tag.value),
       );
-      return { key: keyOf(tag), name: tagText(tag), usd: total(mine), count: mine.length };
+      const was = total(
+        beforeRows.filter((row) =>
+          tagsOf(row).some((t) => t.kind === tag.kind && t.value === tag.value),
+        ),
+      );
+      return { key: keyOf(tag), name: tagText(tag), usd: total(mine), count: mine.length, was };
     })
     .sort((a, b) => b.usd - a.usd);
 
@@ -194,9 +249,13 @@ export function SpendingTab({
       const item = found.get(splitKey(row)) ?? { usd: 0, count: 0 };
       found.set(splitKey(row), { usd: item.usd + Number(row.usd), count: item.count + 1 });
     }
+    const was = new Map<string, number>();
+    for (const row of beforeRows) addTo(was, splitKey(row), Number(row.usd));
+    // A part that was spent before and not now is still a change worth seeing.
+    for (const name of was.keys()) if (!found.has(name)) found.set(name, { usd: 0, count: 0 });
     return [...found.entries()]
-      .map(([name, item]) => ({ name, ...item }))
-      .sort((a, b) => b.usd - a.usd);
+      .map(([name, item]) => ({ name, ...item, was: was.get(name) ?? 0 }))
+      .sort((a, b) => b.usd - a.usd || b.was - a.was);
   })();
   const openSplit = (name: string) => {
     if (level === "大类")
@@ -362,6 +421,31 @@ export function SpendingTab({
           onChange={(tags) => go({ tags })}
           money={money}
         />
+        <div
+          className="border-input inline-flex h-9 overflow-hidden rounded-md border text-sm"
+          role="group"
+          aria-label="口径"
+        >
+          {(
+            [
+              [false, "全部"],
+              [true, "日常"],
+            ] as const
+          ).map(([everyday, label]) => (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={view.everyday === everyday}
+              title={everyday ? `不含转账和单笔超过 ${moneyText(BIG_USD)} 的` : "所有计入的消费"}
+              onClick={() => go({ everyday })}
+              className={`focus-visible:ring-ring px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset ${
+                view.everyday === everyday ? "bg-primary text-primary-foreground" : "bg-background"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {view.merchant && (
           <span className="bg-muted inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm">
             商户：{view.merchant}
@@ -389,12 +473,18 @@ export function SpendingTab({
         <p className="text-muted-foreground text-sm tabular-nums">{shown.length} 笔</p>
         {before && (
           <p className="text-muted-foreground text-sm tabular-nums">
-            {before}：{moneyText(previous)}
-            {previous > 0 &&
-              `（${sum >= previous ? "多" : "少"} ${moneyText(Math.abs(sum - previous))}）`}
+            {beforeName}：{moneyText(previous)}
+            {"\u3000"}
+            <Change usd={sum} was={previous} money={moneyText} />
           </p>
         )}
       </div>
+      {view.everyday && (leftTransfers.length > 0 || leftBig.length > 0) && (
+        <p className="text-muted-foreground -mt-4 text-xs tabular-nums">
+          {`日常没算进去的：转账 ${moneyText(total(leftTransfers))}（${leftTransfers.length} 笔），` +
+            `单笔超过 ${moneyText(BIG_USD)} 的 ${moneyText(total(leftBig))}（${leftBig.length} 笔）。切到「全部」能看到它们。`}
+        </p>
+      )}
 
       <div className="flex h-16 items-end gap-1" aria-label={year ? "按月金额" : "按年金额"}>
         {bars.map((bar) => (
@@ -427,7 +517,8 @@ export function SpendingTab({
           <section aria-label="按标签">
             <h3 className="mb-2 text-sm font-medium">按标签</h3>
             <SplitList
-              items={byTag.map((item) => ({ ...item, key: item.key }))}
+              items={byTag}
+              compare={Boolean(before)}
               sum={sum}
               money={moneyText}
               share={share}
@@ -441,9 +532,17 @@ export function SpendingTab({
         )}
         {level && (
           <section aria-label={`按${level}`}>
-            <h3 className="mb-2 text-sm font-medium">按{level}</h3>
+            <h3 className="mb-2 text-sm font-medium">
+              按{level}
+              {before && (
+                <span className="text-muted-foreground ml-2 text-xs font-normal">
+                  和 {beforeName} 比
+                </span>
+              )}
+            </h3>
             <SplitList
               items={split.slice(0, SPLIT_ROWS).map((item) => ({ ...item, key: item.name }))}
+              compare={Boolean(before)}
               sum={sum}
               money={moneyText}
               share={share}
@@ -617,12 +716,14 @@ export function SpendingTab({
 // One line per part of the total, with a bar for its share; a line opens when onOpen is set.
 function SplitList({
   items,
+  compare,
   money,
   share,
   sum,
   onOpen,
 }: {
-  items: { key: string; name: string; usd: number; count: number }[];
+  items: { key: string; name: string; usd: number; count: number; was: number }[];
+  compare: boolean;
   money: (usd: number) => string;
   share: (usd: number) => string;
   sum: number;
@@ -652,6 +753,13 @@ function SplitList({
             </span>
             <span className="w-24 shrink-0 text-right tabular-nums">{money(item.usd)}</span>
           </div>
+          {compare && (
+            <p className="text-muted-foreground text-right text-xs tabular-nums">
+              上期 {money(item.was)}
+              {"\u3000"}
+              <Change usd={item.usd} was={item.was} money={money} />
+            </p>
+          )}
           <div
             className="bg-primary/30 mt-0.5 h-1 rounded"
             style={{ width: `${sum > 0 ? Math.max(1, (item.usd / sum) * 100) : 0}%` }}
@@ -659,5 +767,19 @@ function SplitList({
         </li>
       ))}
     </ul>
+  );
+}
+
+// More spent than before reads in the warning colour, less in the calm one.
+function Change({ usd, was, money }: { usd: number; was: number; money: (usd: number) => string }) {
+  const diff = usd - was;
+  if (Math.abs(diff) < 0.5) return <span>持平</span>;
+  const pct =
+    was > 0 ? `，${diff > 0 ? "+" : "−"}${Math.round((Math.abs(diff) / was) * 100)}%` : "";
+  return (
+    <span className={diff > 0 ? "text-destructive" : "text-success"}>
+      {diff > 0 ? "多" : "少"} {money(Math.abs(diff))}
+      {pct}
+    </span>
   );
 }
