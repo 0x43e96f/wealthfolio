@@ -19,13 +19,13 @@ import { CheckMenu, type MenuNode } from "./spending-menu";
 // category, the bars over time, and every row of it.
 
 interface View {
-  year: string; // "" = every year
-  month: string; // "" = the whole year
+  years: string[]; // empty = every year
+  month: string; // "" = the whole year; only used when exactly one year is chosen
   categories: string[]; // fine categories; empty = all
   tags: string[]; // tag keys (see keyOf); empty = no tag filter; a row needs any one
   merchant: string;
 }
-const START: View = { year: "", month: "", categories: [], tags: [], merchant: "" };
+const START: View = { years: [], month: "", categories: [], tags: [], merchant: "" };
 const EMPTY_TRIP = { id: null as string | null, name: "", start_day: "", end_day: "", note: "" };
 const SPLIT_ROWS = 40;
 
@@ -72,18 +72,26 @@ export function SpendingTab({
   const groupOf = (category: string) => spending.groups?.of[category] ?? category;
   const all = useMemo(() => spending.records.filter((row) => row.counted), [spending.records]);
   const years = [...new Set(all.map((row) => row.day.slice(0, 4)))].sort().reverse();
-  const prefix = view.year ? view.year + (view.month ? "-" + view.month : "") : "";
+  // One chosen year opens its months, the comparison with the year before and the
+  // monthly bars; several years are simply added up.
+  const year = view.years.length === 1 ? view.years[0] : "";
+  const month = year ? view.month : "";
+  const prefix = year ? year + (month ? "-" + month : "") : "";
+  const chosenYears = new Set(view.years);
   const before = (() => {
-    if (!view.year) return "";
-    if (!view.month) return String(Number(view.year) - 1);
-    const last = Number(view.month) - 1;
-    return last ? `${view.year}-${String(last).padStart(2, "0")}` : `${Number(view.year) - 1}-12`;
+    if (!year) return "";
+    if (!month) return String(Number(year) - 1);
+    const last = Number(month) - 1;
+    return last ? `${year}-${String(last).padStart(2, "0")}` : `${Number(year) - 1}-12`;
   })();
-  const periodName = !view.year
-    ? "全部年份"
-    : view.month
-      ? `${view.year} 年 ${Number(view.month)} 月`
-      : `${view.year} 年`;
+  const periodName =
+    view.years.length === 0
+      ? "全部年份"
+      : !year
+        ? [...view.years].sort().join("、") + " 年"
+        : month
+          ? `${year} 年 ${Number(month)} 月`
+          : `${year} 年`;
 
   const chosenCats = new Set(view.categories);
   const chosenTags = view.tags.map(tagFromKey);
@@ -94,7 +102,9 @@ export function SpendingTab({
   const merchantOk = (row: SpendingRecord) => !view.merchant || row.description === view.merchant;
   const inPeriod = (when: string) => all.filter((row) => !when || row.day.startsWith(when));
 
-  const period = inPeriod(prefix);
+  const period = inPeriod(prefix).filter(
+    (row) => chosenYears.size === 0 || chosenYears.has(row.day.slice(0, 4)),
+  );
   const shown = period.filter((row) => catOk(row) && tagOk(row) && merchantOk(row));
   const sum = total(shown);
   const previous = before
@@ -120,7 +130,7 @@ export function SpendingTab({
       return { key: group, label: group, usd: leaves.reduce((s, l) => s + l.usd, 0), leaves };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, prefix, view.tags, view.merchant, spending.groups]);
+  }, [all, prefix, view.years, view.tags, view.merchant, spending.groups]);
 
   // The tag menu: each kind over its values. A kind's own total counts a row once even
   // when it carries two values of it (two of the owner's own tags).
@@ -155,7 +165,7 @@ export function SpendingTab({
         .sort((a, b) => b.usd - a.usd || a.label.localeCompare(b.label)),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, prefix, view.categories, view.merchant, spending.tag_kinds]);
+  }, [all, prefix, view.years, view.categories, view.merchant, spending.tag_kinds]);
 
   // How the chosen tags split the total. A row with two chosen tags is in both lines.
   const byTag = chosenTags
@@ -199,14 +209,14 @@ export function SpendingTab({
 
   // The bars: the months of the chosen year, or every year.
   const bars = (() => {
-    const rows = (view.year ? inPeriod(view.year) : all).filter(
+    const rows = (year ? inPeriod(year) : all).filter(
       (row) => catOk(row) && tagOk(row) && merchantOk(row),
     );
-    const slot = view.year ? 7 : 4;
+    const slot = year ? 7 : 4;
     const found = new Map<string, number>();
     for (const row of rows) addTo(found, row.day.slice(0, slot), Number(row.usd));
-    const keys = view.year
-      ? Array.from({ length: 12 }, (_, i) => `${view.year}-${String(i + 1).padStart(2, "0")}`)
+    const keys = year
+      ? Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`)
       : [...years].reverse();
     const top = Math.max(1, ...keys.map((key) => found.get(key) ?? 0));
     return keys.map((key) => ({
@@ -291,6 +301,21 @@ export function SpendingTab({
       </p>
     );
 
+  // The year menu: every year, with what it holds under the other filters.
+  const yearUsd = new Map<string, number>();
+  for (const row of all)
+    if (catOk(row) && tagOk(row) && merchantOk(row))
+      addTo(yearUsd, row.day.slice(0, 4), Number(row.usd));
+  const yearNodes: MenuNode[] = years.map((item) => {
+    const usd = yearUsd.get(item) ?? 0;
+    return {
+      key: item,
+      label: `${item} 年`,
+      usd,
+      leaves: [{ key: item, label: `${item} 年`, usd }],
+    };
+  });
+
   const select = "border-input bg-background h-9 rounded-md border px-2 text-sm";
   const moneyText = (usd: number) => money(String(usd));
   const share = (usd: number) => (sum > 0 ? `${Math.round((usd / sum) * 100)}%` : "");
@@ -298,23 +323,19 @@ export function SpendingTab({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2" aria-label="筛选">
-        <select
-          aria-label="消费年份"
-          value={view.year}
-          onChange={(event) => go({ year: event.target.value, month: "" })}
-          className={select}
-        >
-          <option value="">全部年份</option>
-          {years.map((item) => (
-            <option key={item} value={item}>
-              {item} 年
-            </option>
-          ))}
-        </select>
+        <CheckMenu
+          name="年份"
+          everything="全部年份"
+          nodes={yearNodes}
+          selected={view.years}
+          onChange={(chosen) => go({ years: chosen, month: "" })}
+          money={money}
+        />
         <select
           aria-label="消费月份"
-          disabled={!view.year}
-          value={view.month}
+          disabled={!year}
+          title={year ? undefined : "只选一个年份时可以按月看"}
+          value={month}
           onChange={(event) => go({ month: event.target.value })}
           className={select}
         >
@@ -375,7 +396,7 @@ export function SpendingTab({
         )}
       </div>
 
-      <div className="flex h-16 items-end gap-1" aria-label={view.year ? "按月金额" : "按年金额"}>
+      <div className="flex h-16 items-end gap-1" aria-label={year ? "按月金额" : "按年金额"}>
         {bars.map((bar) => (
           <button
             key={bar.key}
@@ -383,12 +404,14 @@ export function SpendingTab({
             title={`${bar.key}：${moneyText(bar.usd)}`}
             aria-label={`${bar.key} ${moneyText(bar.usd)}`}
             onClick={() =>
-              view.year
-                ? go({ month: bar.key.slice(5) === view.month ? "" : bar.key.slice(5) })
-                : go({ year: bar.key, month: "" })
+              year
+                ? go({ month: bar.key.slice(5) === month ? "" : bar.key.slice(5) })
+                : go({ years: [bar.key], month: "" })
             }
             className={`focus-visible:ring-ring min-w-[6px] flex-1 rounded-t focus-visible:outline-none focus-visible:ring-2 ${
-              bar.key === prefix ? "bg-primary" : "bg-primary/30"
+              bar.key === prefix || (!year && chosenYears.has(bar.key))
+                ? "bg-primary"
+                : "bg-primary/30"
             }`}
             style={{ height: `${Math.max(bar.height, 2)}%` }}
           />

@@ -1077,13 +1077,14 @@ describe("private Portfolio", () => {
     });
   });
 
-  it("narrows to one year and back to every year", async () => {
+  it("ticks one year, several years and back to every year", async () => {
     const spending = {
       records: [
         spendRow("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
         spendRow("a", "2025-09-30", "AMZN", "20", "网购"),
+        spendRow("c", "2024-03-01", "COSTCO", "40", "超市"),
       ],
-      categories: ["网购", "餐饮"],
+      categories: ["网购", "餐饮", "超市"],
       groups,
       cards: [],
       topup_check: [],
@@ -1093,15 +1094,22 @@ describe("private Portfolio", () => {
     stubSpending(spending, []);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
-    expect(await screen.findByText("$38.00", { selector: "p.text-3xl" })).toBeTruthy();
+    expect(await screen.findByText("$78.00", { selector: "p.text-3xl" })).toBeTruthy();
     expect(screen.getByLabelText<HTMLSelectElement>("消费月份").disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("消费年份"), { target: { value: "2026" } });
+    // One year opens its months.
+    fireEvent.click(screen.getByLabelText("年份筛选"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "2026 年" }));
     expect(screen.getByText("2026 年消费")).toBeTruthy();
     expect(totalShown("$18.00")).toBeTruthy();
     expect(screen.getByLabelText<HTMLSelectElement>("消费月份").disabled).toBe(false);
-    fireEvent.change(screen.getByLabelText("消费年份"), { target: { value: "" } });
-    expect(totalShown("$38.00")).toBeTruthy();
-    // The split lists the groups.
+    // Two years are added up; months no longer apply.
+    fireEvent.click(screen.getByRole("checkbox", { name: "2024 年" }));
+    expect(screen.getByText("2024、2026 年消费")).toBeTruthy();
+    expect(totalShown("$58.00")).toBeTruthy();
+    expect(screen.getByLabelText<HTMLSelectElement>("消费月份").disabled).toBe(true);
+    // Clearing the ticks is every year again.
+    fireEvent.click(screen.getByRole("button", { name: "清空（看全部年份）" }));
+    expect(totalShown("$78.00")).toBeTruthy();
     expect(screen.getByRole("button", { name: "吃喝" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "购物" })).toBeTruthy();
   });
