@@ -908,7 +908,9 @@ describe("private Portfolio", () => {
     of: { 餐饮: "吃喝", 超市: "吃喝", 网购: "购物" },
   };
 
-  it("shows card spending for the month, counts every card and refiles a merchant", async () => {
+  const totalShown = (text: string) => screen.getByText(text, { selector: "p.text-3xl" });
+
+  it("opens on every year, counts every card and refiles a merchant", async () => {
     const spending = {
       records: [
         spendRow("b", "2026-10-02", "UBER CANADA/UBEREATS", "18", "餐饮"),
@@ -933,9 +935,8 @@ describe("private Portfolio", () => {
     stubSpending(spending, calls);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
-    // Opens on the latest month with spending: every card is in it.
-    expect(await screen.findByText("2026-10 消费")).toBeTruthy();
-    expect(screen.getByText("$31.00", { selector: "p" })).toBeTruthy();
+    expect(await screen.findByText("全部年份消费")).toBeTruthy();
+    expect(totalShown("$51.00")).toBeTruthy();
     expect(screen.getByText("（对不上）", { exact: false })).toBeTruthy();
     // A merchant is refiled by what the owner types.
     vi.stubGlobal(
@@ -949,7 +950,7 @@ describe("private Portfolio", () => {
     expect(JSON.parse(put.body!)).toEqual({ merchant: "UBER CANADA/UBEREATS", category: "家居" });
   });
 
-  it("drills from the groups down to a merchant and back, with the filters shown", async () => {
+  it("narrows from a group to a category to a merchant and clears back", async () => {
     const spending = {
       records: [
         spendRow("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
@@ -966,22 +967,20 @@ describe("private Portfolio", () => {
     stubSpending(spending, []);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
-    expect(await screen.findByText("$78.00", { selector: "p" })).toBeTruthy();
-    // The top level lists the groups; a group opens its categories, a category its merchants.
-    const filters = () => screen.getByLabelText("当前筛选");
+    expect(await screen.findByText("$78.00", { selector: "p.text-3xl" })).toBeTruthy();
+    // A group in the split selects its categories; then the split is by category.
     fireEvent.click(screen.getByRole("button", { name: "吃喝" }));
-    expect(screen.getByText("$58.00", { selector: "p" })).toBeTruthy();
-    expect(filters().textContent).toContain("吃喝");
+    expect(totalShown("$58.00")).toBeTruthy();
+    expect(screen.getByLabelText("类别筛选").textContent).toContain("吃喝");
     fireEvent.click(screen.getByRole("button", { name: "超市" }));
-    expect(screen.getByText("$40.00", { selector: "p" })).toBeTruthy();
+    expect(totalShown("$40.00")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "COSTCO" }));
-    expect(filters().textContent).toContain("COSTCO");
-    // Clearing the filters returns to the whole.
-    fireEvent.click(screen.getByRole("button", { name: "清除全部" }));
-    expect(screen.getByText("$78.00", { selector: "p" })).toBeTruthy();
+    expect(screen.getByText("商户：COSTCO")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "清除类别和标签" }));
+    expect(totalShown("$78.00")).toBeTruthy();
   });
 
-  it("counts tags inside the chosen scope, filters by one and tags a row by hand", async () => {
+  it("adds up several ticked tags, splits by them and tags a row by hand", async () => {
     const trip = [{ kind: "旅行", value: "纽芬兰自驾" }];
     const spending = {
       records: [
@@ -989,6 +988,9 @@ describe("private Portfolio", () => {
         spendRow("d", "2026-07-14", "WESTJET", "300", "交通出行", [
           ...trip,
           { kind: "出行", value: "飞机" },
+        ]),
+        spendRow("e", "2026-07-15", "VIA RAIL", "50", "交通出行", [
+          { kind: "出行", value: "火车" },
         ]),
         spendRow("a", "2026-07-02", "HOME DINER", "70", "餐饮"),
       ],
@@ -1020,19 +1022,21 @@ describe("private Portfolio", () => {
     stubSpending(spending, calls);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
-    expect(await screen.findByText("2026-07 消费")).toBeTruthy();
-    const panel = () => within(screen.getByLabelText("标签"));
-    // The trip holds $330 of the month; inside 吃喝 only its $30 dinner.
-    expect(panel().getAllByText("$330.00")).toHaveLength(2); // the kind and its one value
+    expect(await screen.findByText("$450.00", { selector: "p.text-3xl" })).toBeTruthy();
+    // Ticking the trip keeps its rows; ticking 火车 as well adds those up too.
+    fireEvent.click(screen.getByLabelText("标签筛选"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "旅行 纽芬兰自驾" }));
+    expect(totalShown("$330.00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "出行 火车" }));
+    expect(totalShown("$380.00")).toBeTruthy();
+    const byTag = within(screen.getByLabelText("按标签"));
+    expect(byTag.getByText("旅行：纽芬兰自驾")).toBeTruthy();
+    expect(byTag.getByText("出行：火车")).toBeTruthy();
+    // Inside 吃喝 only the trip's dinner is left.
     fireEvent.click(screen.getByRole("button", { name: "吃喝" }));
-    expect(panel().getAllByText("$30.00")).toHaveLength(2);
-    expect(panel().queryByText("飞机")).toBeNull();
-    // Choosing the trip keeps only its rows.
-    fireEvent.click(panel().getByRole("button", { name: "纽芬兰自驾" }));
-    expect(screen.getByText("$30.00", { selector: "p" })).toBeTruthy();
-    expect(screen.getByText("标签 旅行 · 纽芬兰自驾", { exact: false })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "去掉标签筛选" }));
-    expect(screen.getByText("$100.00", { selector: "p" })).toBeTruthy();
+    expect(totalShown("$30.00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "清除类别和标签" }));
+    expect(totalShown("$450.00")).toBeTruthy();
     // Pinning a row to a trip sends its id and the trip's id.
     vi.stubGlobal(
       "prompt",
@@ -1073,7 +1077,7 @@ describe("private Portfolio", () => {
     });
   });
 
-  it("adds up every year when all years is chosen", async () => {
+  it("narrows to one year and back to every year", async () => {
     const spending = {
       records: [
         spendRow("b", "2026-10-02", "UBER EATS", "18", "餐饮"),
@@ -1089,13 +1093,15 @@ describe("private Portfolio", () => {
     stubSpending(spending, []);
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
-    expect(await screen.findByText("2026-10 消费")).toBeTruthy();
-    // All years: the month no longer applies, and nothing is left out.
-    fireEvent.change(screen.getByLabelText("消费年份"), { target: { value: "" } });
-    expect(screen.getByText("全部年份消费")).toBeTruthy();
-    expect(screen.getByText("$38.00", { selector: "p" })).toBeTruthy();
+    expect(await screen.findByText("$38.00", { selector: "p.text-3xl" })).toBeTruthy();
     expect(screen.getByLabelText<HTMLSelectElement>("消费月份").disabled).toBe(true);
-    // The top level lists the groups.
+    fireEvent.change(screen.getByLabelText("消费年份"), { target: { value: "2026" } });
+    expect(screen.getByText("2026 年消费")).toBeTruthy();
+    expect(totalShown("$18.00")).toBeTruthy();
+    expect(screen.getByLabelText<HTMLSelectElement>("消费月份").disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("消费年份"), { target: { value: "" } });
+    expect(totalShown("$38.00")).toBeTruthy();
+    // The split lists the groups.
     expect(screen.getByRole("button", { name: "吃喝" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "购物" })).toBeTruthy();
   });
