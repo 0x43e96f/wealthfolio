@@ -5,7 +5,8 @@ import type { SpendingRecord } from "./client";
 // a trip across countries (泰国+越南) places each row by its currency. A row on no trip
 // was spent at home: Wuxi for yuan, Kelowna for Canadian dollars (Vancouver before the
 // owner moved away on 2021-05-04), and 不分地点 for what names no place (US-dollar
-// subscriptions, crypto payments).
+// subscriptions, crypto payments). A card swipe that names no place is placed by the
+// day it was made (placesFor).
 
 export interface Place {
   country: string;
@@ -96,6 +97,10 @@ export function placeOf(row: SpendingRecord): Place {
     const match = places.find((place) => place.country === country) ?? places[0];
     return { country: match.country, city: match.city };
   }
+  // Gift cards and phone top-ups bought with crypto (JD cards …) are spent in China,
+  // wherever the owner was when buying them.
+  if (row.source === "crypto" && row.category === "礼品卡与话费")
+    return { country: "中国", city: "无锡（家）" };
   const country = currencyCountry(row);
   if (country === "中国") return { country, city: "无锡（家）" };
   if (country === "加拿大")
@@ -105,3 +110,40 @@ export function placeOf(row: SpendingRecord): Place {
 }
 
 export const placeKey = (place: Place) => `${place.country}\u0000${place.city}`;
+
+// Card payments that name no place (a Bitget swipe has no merchant) were made wherever
+// the owner was that day: the place most of that day's other rows were spent in, or the
+// day before or after. Subscriptions stay 不分地点.
+const CARD_SOURCES = new Set(["bitget", "plasma", "solayer", "etherfi"]);
+const ONLINE_CATEGORIES = new Set(["订阅与软件", "公司事务", "卡费用"]);
+
+export function placesFor(records: SpendingRecord[]): Map<string, Place> {
+  const found = new Map<string, Place>();
+  const byDay = new Map<string, Map<string, { place: Place; count: number }>>();
+  for (const row of records) {
+    const place = placeOf(row);
+    found.set(row.id, place);
+    if (place.country === NOWHERE) continue;
+    const day = byDay.get(row.day) ?? new Map<string, { place: Place; count: number }>();
+    const seen = day.get(placeKey(place)) ?? { place, count: 0 };
+    day.set(placeKey(place), { place, count: seen.count + 1 });
+    byDay.set(row.day, day);
+  }
+  const shift = (day: string, by: number) => {
+    const date = new Date(`${day}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + by);
+    return date.toISOString().slice(0, 10);
+  };
+  for (const row of records) {
+    if (found.get(row.id)?.country !== NOWHERE) continue;
+    if (!CARD_SOURCES.has(row.source ?? "") || ONLINE_CATEGORIES.has(row.category)) continue;
+    for (const day of [row.day, shift(row.day, -1), shift(row.day, 1)]) {
+      const there = [...(byDay.get(day)?.values() ?? [])].sort((a, b) => b.count - a.count)[0];
+      if (there) {
+        found.set(row.id, there.place);
+        break;
+      }
+    }
+  }
+  return found;
+}

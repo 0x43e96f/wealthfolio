@@ -12,8 +12,9 @@ import {
 } from "./client";
 import { Ledger, tagsOf, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
-import { NOWHERE, placeKey, placeOf, type Place } from "./spending-place";
-import { SpendingMix, type MixRow } from "./spending-mix";
+import { NOWHERE, placeKey, placesFor } from "./spending-place";
+import { groupColour, SpendingMix, type MixRow } from "./spending-mix";
+import { SpendingPie } from "./spending-pie";
 import { MonthExplained } from "./spending-month";
 import { Breakdown } from "./spending-breakdown";
 import { ChangePill, SEGMENTS, segment } from "./spending-split";
@@ -76,7 +77,7 @@ export function SpendingTab({
   const [view, setView] = useState<View>(START);
   const [note, setNote] = useState("");
   const [managing, setManaging] = useState(false);
-  const [chart, setChart] = useState<"走势" | "构成">("走势");
+  const [chart, setChart] = useState<"走势" | "构成" | "占比">("走势");
   const [tripForm, setTripForm] = useState(EMPTY_TRIP);
 
   // Every filter change is a step of the browser's history: back undoes it.
@@ -147,11 +148,7 @@ export function SpendingTab({
     chosenTags.length === 0 ||
     tagsOf(row).some((t) => chosenTags.some((c) => c.kind === t.kind && c.value === t.value));
   // Where each row was spent (its trip's place, or home), worked out once per load.
-  const places = useMemo(() => {
-    const found = new Map<string, Place>();
-    for (const row of spending.records) found.set(row.id, placeOf(row));
-    return found;
-  }, [spending.records]);
+  const places = useMemo(() => placesFor(spending.records), [spending.records]);
   const placeOfRow = (row: SpendingRecord) =>
     places.get(row.id) ?? { country: NOWHERE, city: NOWHERE };
   const chosenPlaces = new Set(view.places);
@@ -610,11 +607,13 @@ export function SpendingTab({
       <section aria-label="消费图">
         <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
           <h3 className="text-sm font-medium">
-            {chart === "构成"
-              ? `大类构成（${year ? `${year} 年每月` : "每年"}）`
-              : tripMode
-                ? "每趟旅行"
-                : "每月走势"}
+            {chart === "占比"
+              ? `${periodName}各大类占比`
+              : chart === "构成"
+                ? `大类构成（${year ? `${year} 年每月` : "每年"}）`
+                : tripMode
+                  ? "每趟旅行"
+                  : "每月走势"}
           </h3>
           {chart === "走势" && !tripMode && (
             <span className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -655,7 +654,7 @@ export function SpendingTab({
             </span>
           )}
           <span className={`${SEGMENTS} sm:ml-auto`} role="group" aria-label="切换图">
-            {(["走势", "构成"] as const).map((tab) => (
+            {(["走势", "构成", "占比"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -668,7 +667,17 @@ export function SpendingTab({
             ))}
           </span>
         </div>
-        {chart === "构成" ? (
+        {chart === "占比" ? (
+          <SpendingPie
+            slices={groupOrder.map((group) => ({
+              name: group,
+              usd: total(shown.filter((row) => groupOf(row.category) === group)),
+            }))}
+            colour={(group) => groupColour(groupOrder, group)}
+            money={moneyText}
+            onPick={pickGroup}
+          />
+        ) : chart === "构成" ? (
           <SpendingMix rows={mixRows} groups={groupOrder} money={moneyText} onGroup={pickGroup} />
         ) : tripMode ? (
           <TripChart

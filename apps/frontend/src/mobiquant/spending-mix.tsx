@@ -14,15 +14,12 @@ export interface MixRow {
   total: number;
 }
 
-const COLOURS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-  "var(--muted-foreground)",
-  "color-mix(in srgb, var(--foreground) 30%, transparent)",
-];
+// The group colours are look.css's --spend-1 … --spend-7, in the page's group order.
+const COLOURS = [1, 2, 3, 4, 5, 6, 7].map((n) => `var(--spend-${n})`);
+
+// A group's colour: by its place in the page's group order, the same in every chart.
+export const groupColour = (groups: string[], group: string) =>
+  COLOURS[Math.max(0, groups.indexOf(group)) % COLOURS.length];
 
 export function SpendingMix({
   rows,
@@ -37,7 +34,7 @@ export function SpendingMix({
 }) {
   const [share, setShare] = useState(false);
   const [at, setAt] = useState<string | null>(null);
-  const colour = (group: string) => COLOURS[groups.indexOf(group) % COLOURS.length];
+  const colour = (group: string) => groupColour(groups, group);
   const top = Math.max(1, ...rows.map((row) => row.total));
   // The period whose groups are listed under the bars: the one pointed at, else the latest.
   const detail = rows.find((row) => row.key === at) ?? rows[rows.length - 1];

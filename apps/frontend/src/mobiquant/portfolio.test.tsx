@@ -1506,6 +1506,67 @@ describe("private Portfolio", () => {
     expect(screen.getByLabelText("地点筛选").textContent).toContain("上海");
   });
 
+  it("shows each group's share as a ring and places a card swipe by its day", async () => {
+    const spending = {
+      records: [
+        {
+          ...spendRow("a", "2025-03-02", "SHANGHAI NOODLE", "60", "餐饮", [
+            { kind: "旅行", value: "上海（2025-03）" },
+          ]),
+          orig_currency: "CNY",
+          orig_amount: "430",
+          source: "alipay",
+        },
+        {
+          ...spendRow("b", "2025-03-02", "BITGET CARD 101500", "30", "网购", [
+            { kind: "旅行", value: "上海（2025-03）" },
+          ]),
+          source: "bitget",
+          orig_currency: "USD",
+          orig_amount: "30",
+        },
+        {
+          ...spendRow("c", "2025-03-09", "WUXI MARKET", "10", "网购"),
+          orig_currency: "CNY",
+          orig_amount: "72",
+          source: "alipay",
+        },
+        {
+          ...spendRow("d", "2025-03-09", "BITGET CARD 093000", "20", "网购"),
+          source: "bitget",
+          orig_currency: "USD",
+          orig_amount: "20",
+        },
+      ],
+      categories: ["餐饮", "网购"],
+      groups,
+      tag_kinds: [{ kind: "旅行", source: "trip" }],
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    expect(await screen.findByText("$120.00", { selector: "p.text-3xl" })).toBeTruthy();
+    // 占比: 吃喝 60 of 120 and 购物 60 of 120.
+    fireEvent.click(within(screen.getByLabelText("消费图")).getByRole("button", { name: "占比" }));
+    const ring = within(screen.getByLabelText("占比明细"));
+    expect(ring.getByRole("button", { name: "只看吃喝" }).textContent).toContain("50%");
+    expect(ring.getByRole("button", { name: "只看购物" }).textContent).toContain("$60.00");
+    // The swipe on a day at home is placed at home, not 不分地点.
+    const split = () => within(screen.getByLabelText("拆分"));
+    fireEvent.click(split().getByRole("button", { name: "城市" }));
+    const line = (name: string) => split().getByRole("button", { name }).closest("li")!.textContent;
+    expect(line("无锡（家）")).toContain("$30.00");
+    expect(line("上海")).toContain("$90.00");
+    expect(split().queryByRole("button", { name: "不分地点" })).toBeNull();
+    // Clicking a share narrows the page to that group.
+    fireEvent.click(ring.getByRole("button", { name: "只看吃喝" }));
+    expect(totalShown("$60.00")).toBeTruthy();
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {

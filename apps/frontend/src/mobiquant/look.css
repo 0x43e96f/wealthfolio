@@ -156,3 +156,25 @@ body {
   border-radius: 9999px;
   background: #38bdf8;
 }
+
+/* Spending groups (spending-mix.tsx groupColour): one clearly different hue each, in the
+   order 吃喝 购物 交通与玩乐 居住 生活与账单 转账 其他, so the ring and the bars can be told
+   apart at a glance. Lighter in the dark look. */
+:root {
+  --spend-1: oklch(0.6 0.13 150);
+  --spend-2: oklch(0.56 0.14 255);
+  --spend-3: oklch(0.72 0.14 80);
+  --spend-4: oklch(0.6 0.15 35);
+  --spend-5: oklch(0.56 0.13 310);
+  --spend-6: oklch(0.62 0.09 200);
+  --spend-7: oklch(0.62 0.01 260);
+}
+.dark {
+  --spend-1: oklch(0.72 0.14 150);
+  --spend-2: oklch(0.7 0.13 255);
+  --spend-3: oklch(0.82 0.13 85);
+  --spend-4: oklch(0.7 0.15 40);
+  --spend-5: oklch(0.7 0.13 310);
+  --spend-6: oklch(0.75 0.09 200);
+  --spend-7: oklch(0.6 0.01 260);
+}
