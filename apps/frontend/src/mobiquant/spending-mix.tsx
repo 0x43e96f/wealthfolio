@@ -135,8 +135,9 @@ export function SpendingMix({
           </p>
           <ul className="grid grid-cols-1 gap-x-6 gap-y-0.5 sm:grid-cols-2">
             {used
+              // Every group used anywhere, even at 0, so the list keeps its height
+              // as the pointer moves from bar to bar.
               .map((group) => ({ group, usd: detail.parts.get(group) ?? 0 }))
-              .filter((piece) => piece.usd > 0)
               .sort((a, b) => b.usd - a.usd)
               .map((piece) => (
                 <li key={piece.group} className="flex items-center gap-2">

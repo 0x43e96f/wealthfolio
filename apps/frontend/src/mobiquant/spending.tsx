@@ -14,7 +14,8 @@ import { Ledger, tagsOf, tagText, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
 import { SpendingMix, type MixRow } from "./spending-mix";
 import { MonthExplained } from "./spending-month";
-import { TripCompare } from "./spending-trips";
+import { Compare } from "./spending-compare";
+import { ChangePill, SplitList } from "./spending-split";
 import { HIGH_RATIO, SpendingTrend, USUAL_MONTHS, withUsual } from "./spending-trend";
 
 // The 消费 tab. Four drop-downs choose what is counted: a year, a month, any number of
@@ -265,7 +266,7 @@ export function SpendingTab({
       .map(([name, item]) => ({ name, ...item, was: was.get(name) ?? 0 }))
       .sort((a, b) => b.usd - a.usd || b.was - a.was);
   })();
-  const openSplit = (name: string) => {
+  const openSplit = ({ name }: { name: string }) => {
     if (level === "大类")
       go({
         categories: categoryNodes.find((node) => node.key === name)?.leaves.map((l) => l.key) ?? [],
@@ -433,7 +434,6 @@ export function SpendingTab({
 
   const select = "border-input bg-background h-9 rounded-md border px-2 text-sm";
   const moneyText = (usd: number) => money(String(usd));
-  const share = (usd: number) => (sum > 0 ? `${Math.round((usd / sum) * 100)}%` : "");
 
   return (
     <div className="space-y-6">
@@ -531,7 +531,7 @@ export function SpendingTab({
           <p className="text-muted-foreground text-sm tabular-nums">
             {beforeName}：{moneyText(previous)}
             {"\u3000"}
-            <Change usd={sum} was={previous} money={moneyText} />
+            <ChangePill usd={sum} was={previous} money={moneyText} />
           </p>
         )}
       </div>
@@ -573,13 +573,7 @@ export function SpendingTab({
         {byTag.length > 0 && (
           <section aria-label="按标签">
             <h3 className="mb-2 text-sm font-medium">按标签</h3>
-            <SplitList
-              items={byTag}
-              compare={Boolean(before)}
-              sum={sum}
-              money={moneyText}
-              share={share}
-            />
+            <SplitList items={byTag} compare={Boolean(before)} sum={sum} money={moneyText} />
             {byTag.length > 1 && (
               <p className="text-muted-foreground mt-1 text-xs">
                 一笔带两个所选标签时两行都算，合计按一次算。
@@ -624,7 +618,6 @@ export function SpendingTab({
               compare={Boolean(before)}
               sum={sum}
               money={moneyText}
-              share={share}
               onOpen={openSplit}
             />
             {split.length > SPLIT_ROWS && (
@@ -643,11 +636,21 @@ export function SpendingTab({
           </h3>
           <SpendingMix rows={mixRows} groups={groupOrder} money={moneyText} onGroup={pickGroup} />
         </section>
-        <TripCompare
-          rows={period.filter((row) => catOk(row) && merchantOk(row))}
+        <Compare
+          rows={shown}
+          beforeRows={beforeRows}
+          compare={Boolean(before)}
           trips={trips}
+          tagKinds={tagNodes.map((node) => node.key)}
+          preferred={chosenTags.find((tag) => tag.value)?.kind ?? "类别"}
           money={moneyText}
-          onPick={(name) => go({ tags: [keyOf({ kind: "旅行", value: name })] })}
+          onPick={(by, name) =>
+            by === "类别"
+              ? go({ categories: [name], merchant: "" })
+              : by === "商户"
+                ? go({ merchant: name })
+                : go({ tags: [keyOf({ kind: by, value: name })] })
+          }
         />
       </div>
 
@@ -804,80 +807,5 @@ export function SpendingTab({
         </details>
       </section>
     </div>
-  );
-}
-
-// One line per part of the total, with a bar for its share; a line opens when onOpen is set.
-function SplitList({
-  items,
-  compare,
-  money,
-  share,
-  sum,
-  onOpen,
-}: {
-  items: { key: string; name: string; usd: number; count: number; was: number }[];
-  compare: boolean;
-  money: (usd: number) => string;
-  share: (usd: number) => string;
-  sum: number;
-  onOpen?: (name: string) => void;
-}) {
-  if (items.length === 0)
-    return <p className="text-muted-foreground py-3 text-sm">这个范围里没有消费。</p>;
-  return (
-    <ul className="space-y-1 text-sm">
-      {items.map((item) => (
-        <li key={item.key}>
-          <div className="flex items-baseline gap-2">
-            {onOpen ? (
-              <button
-                type="button"
-                className="focus-visible:ring-ring min-w-0 truncate text-left underline focus-visible:outline-none focus-visible:ring-2"
-                onClick={() => onOpen(item.name)}
-              >
-                {item.name}
-              </button>
-            ) : (
-              <span className="min-w-0 truncate">{item.name}</span>
-            )}
-            <span className="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
-              {item.count} 笔{"\u3000"}
-              {share(item.usd)}
-            </span>
-            <span className="w-24 shrink-0 text-right tabular-nums">{money(item.usd)}</span>
-          </div>
-          <div className="mt-0.5 flex items-center gap-3">
-            <div className="h-1 min-w-0 flex-1">
-              <div
-                className="bg-primary/30 h-1 rounded"
-                style={{ width: `${sum > 0 ? Math.max(1, (item.usd / sum) * 100) : 0}%` }}
-              />
-            </div>
-            {compare && (
-              <p className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                上期 {money(item.was)}
-                {"\u3000"}
-                <Change usd={item.usd} was={item.was} money={money} />
-              </p>
-            )}
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// More spent than before reads in the warning colour, less in the calm one.
-function Change({ usd, was, money }: { usd: number; was: number; money: (usd: number) => string }) {
-  const diff = usd - was;
-  if (Math.abs(diff) < 0.5) return <span>持平</span>;
-  const pct =
-    was > 0 ? `，${diff > 0 ? "+" : "−"}${Math.round((Math.abs(diff) / was) * 100)}%` : "";
-  return (
-    <span className={diff > 0 ? "text-destructive" : "text-success"}>
-      {diff > 0 ? "多" : "少"} {money(Math.abs(diff))}
-      {pct}
-    </span>
   );
 }

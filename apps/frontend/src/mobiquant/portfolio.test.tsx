@@ -972,9 +972,11 @@ describe("private Portfolio", () => {
     fireEvent.click(screen.getByRole("button", { name: "吃喝" }));
     expect(totalShown("$58.00")).toBeTruthy();
     expect(screen.getByLabelText("类别筛选").textContent).toContain("吃喝");
-    fireEvent.click(screen.getByRole("button", { name: "超市" }));
+    fireEvent.click(within(screen.getByLabelText("按类别")).getByRole("button", { name: "超市" }));
     expect(totalShown("$40.00")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "COSTCO" }));
+    fireEvent.click(
+      within(screen.getByLabelText("按商户")).getByRole("button", { name: "COSTCO" }),
+    );
     expect(screen.getByText("商户：COSTCO")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "清除类别和标签" }));
     expect(totalShown("$78.00")).toBeTruthy();
@@ -1027,6 +1029,12 @@ describe("private Portfolio", () => {
     fireEvent.click(screen.getByLabelText("标签筛选"));
     fireEvent.click(await screen.findByRole("checkbox", { name: "旅行 纽芬兰自驾" }));
     expect(totalShown("$330.00")).toBeTruthy();
+    // A ticked trip turns the comparison to trips.
+    expect(
+      within(screen.getByLabelText("对比"))
+        .getByRole("button", { name: "旅行" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
     fireEvent.click(screen.getByRole("checkbox", { name: "出行 火车" }));
     expect(totalShown("$380.00")).toBeTruthy();
     const byTag = within(screen.getByLabelText("按标签"));
@@ -1248,7 +1256,9 @@ describe("private Portfolio", () => {
         .map((button) => button.textContent)
         .filter((text) => text === "吃喝" || text === "购物");
     expect(names()).toEqual(["购物", "吃喝"]);
-    fireEvent.click(screen.getByRole("button", { name: "按变化" }));
+    fireEvent.click(
+      within(screen.getByLabelText("按大类")).getByRole("button", { name: "按变化" }),
+    );
     expect(names()).toEqual(["吃喝", "购物"]);
   });
 
@@ -1319,20 +1329,24 @@ describe("private Portfolio", () => {
     fireEvent.click(mix.getByRole("button", { name: "只看吃喝" }));
     expect(totalShown("$100.00")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "清除类别和标签" }));
-    // The trips: newest first, then by cost per day.
-    const trips = within(screen.getByLabelText("旅行对比"));
+    // The comparison is by category until a trip is ticked, or 旅行 is picked.
+    const compare = () => within(screen.getByLabelText("对比"));
+    expect(compare().getByRole("button", { name: "类别" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    fireEvent.click(compare().getByRole("button", { name: "旅行" }));
     const names = () =>
-      trips
+      compare()
         .getAllByRole("button")
         .map((button) => button.textContent)
         .filter((text) => text === "纽芬兰自驾" || text === "泰国");
-    expect(names()).toEqual(["泰国", "纽芬兰自驾"]);
-    expect(trips.getByText("10 天，每天 $66.00")).toBeTruthy();
-    fireEvent.click(trips.getByRole("button", { name: "按合计" }));
     expect(names()).toEqual(["纽芬兰自驾", "泰国"]);
-    fireEvent.click(trips.getByRole("button", { name: "按每天" }));
+    expect(compare().getByText(/10 天.每天 \$66\.00/)).toBeTruthy();
+    fireEvent.click(compare().getByRole("button", { name: "按时间" }));
     expect(names()).toEqual(["泰国", "纽芬兰自驾"]);
-    fireEvent.click(trips.getByRole("button", { name: "纽芬兰自驾" }));
+    fireEvent.click(compare().getByRole("button", { name: "按每天" }));
+    expect(names()).toEqual(["泰国", "纽芬兰自驾"]);
+    fireEvent.click(compare().getByRole("button", { name: "纽芬兰自驾" }));
     expect(totalShown("$660.00")).toBeTruthy();
   });
 
