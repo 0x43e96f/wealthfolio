@@ -10,12 +10,13 @@ import {
   type Spending,
   type SpendingRecord,
 } from "./client";
-import { Ledger, tagsOf, tagText, type Tag } from "./spending-ledger";
+import { Ledger, tagsOf, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
 import { SpendingMix, type MixRow } from "./spending-mix";
 import { MonthExplained } from "./spending-month";
-import { Compare } from "./spending-compare";
-import { ChangePill, SplitList } from "./spending-split";
+import { Breakdown } from "./spending-breakdown";
+import { ChangePill } from "./spending-split";
+import { TripChart, type TripPoint } from "./spending-tripchart";
 import { HIGH_RATIO, SpendingTrend, USUAL_MONTHS, withUsual } from "./spending-trend";
 
 // The 消费 tab. Four drop-downs choose what is counted: a year, a month, any number of
@@ -48,7 +49,6 @@ const TRANSFER_GROUP = "转账";
 // 教育培训 is left out: it comes once, in big sums.
 const FIXED_CATEGORIES = new Set(["房租", "订阅与软件", "保险", "卡费用", "公司事务"]);
 const EMPTY_TRIP = { id: null as string | null, name: "", start_day: "", end_day: "", note: "" };
-const SPLIT_ROWS = 40;
 
 const keyOf = (tag: Tag) => `${tag.kind}\u0000${tag.value}`;
 const tagFromKey = (key: string): Tag => {
@@ -73,7 +73,7 @@ export function SpendingTab({
   const [view, setView] = useState<View>(START);
   const [note, setNote] = useState("");
   const [managing, setManaging] = useState(false);
-  const [byChange, setByChange] = useState(false); // sort the split by what grew most
+  const [chart, setChart] = useState<"走势" | "构成">("走势");
   const [tripForm, setTripForm] = useState(EMPTY_TRIP);
 
   // Every filter change is a step of the browser's history: back undoes it.
@@ -226,54 +226,48 @@ export function SpendingTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [all, prefix, view.years, view.categories, view.merchant, spending.tag_kinds]);
 
-  // How the chosen tags split the total. A row with two chosen tags is in both lines.
-  const byTag = chosenTags
-    .map((tag) => {
-      const mine = shown.filter((row) =>
-        tagsOf(row).some((t) => t.kind === tag.kind && t.value === tag.value),
-      );
-      const was = total(
-        beforeRows.filter((row) =>
-          tagsOf(row).some((t) => t.kind === tag.kind && t.value === tag.value),
-        ),
-      );
-      return { key: keyOf(tag), name: tagText(tag), usd: total(mine), count: mine.length, was };
-    })
-    .sort((a, b) => b.usd - a.usd);
-
-  // How the total splits one level below what is chosen: groups when no category is,
-  // merchants when one is, categories otherwise.
-  const level = view.merchant
-    ? ""
-    : view.categories.length === 0
-      ? "大类"
+  // The breakdown's level follows the filters: the trips once trips are ticked, the
+  // merchants of one category, the categories of several, the groups at first.
+  const preferredLevel =
+    chosenTags.find((tag) => tag.value)?.kind ??
+    (view.merchant
+      ? "类别"
       : view.categories.length === 1
         ? "商户"
-        : "类别";
-  const splitKey = (row: SpendingRecord) =>
-    level === "大类" ? groupOf(row.category) : level === "商户" ? row.description : row.category;
-  const split = (() => {
-    const found = new Map<string, { usd: number; count: number }>();
-    for (const row of shown) {
-      const item = found.get(splitKey(row)) ?? { usd: 0, count: 0 };
-      found.set(splitKey(row), { usd: item.usd + Number(row.usd), count: item.count + 1 });
-    }
-    const was = new Map<string, number>();
-    for (const row of beforeRows) addTo(was, splitKey(row), Number(row.usd));
-    // A part that was spent before and not now is still a change worth seeing.
-    for (const name of was.keys()) if (!found.has(name)) found.set(name, { usd: 0, count: 0 });
+        : view.categories.length
+          ? "类别"
+          : "大类");
+  const pickPart = (level: string, name: string) =>
+    level === "大类"
+      ? pickGroup(name)
+      : level === "类别"
+        ? go({ categories: [name], merchant: "" })
+        : level === "商户"
+          ? go({ merchant: name })
+          : go({ tags: [keyOf({ kind: level, value: name })] });
+
+  // Looking at trips only, the chart shows trips, not months (most months have none).
+  const tripMode = chosenTags.length > 0 && chosenTags.every((tag) => tag.kind === "旅行");
+  const tripPoints: TripPoint[] = (() => {
+    if (!tripMode) return [];
+    const found = new Map<string, number>();
+    for (const row of shown)
+      for (const tag of tagsOf(row))
+        if (tag.kind === "旅行" && tag.value) addTo(found, tag.value, Number(row.usd));
     return [...found.entries()]
-      .map(([name, item]) => ({ name, ...item, was: was.get(name) ?? 0 }))
-      .sort((a, b) => b.usd - a.usd || b.was - a.was);
+      .map(([name, usd]) => {
+        const trip = (spending.trips ?? []).find((t) => t.name === name);
+        const days = trip
+          ? Math.round(
+              (Date.parse(trip.end_day + "T00:00:00Z") -
+                Date.parse(trip.start_day + "T00:00:00Z")) /
+                86_400_000,
+            ) + 1
+          : 0;
+        return { name, usd, start: trip?.start_day ?? "", end: trip?.end_day ?? "", days };
+      })
+      .sort((a, b) => a.start.localeCompare(b.start));
   })();
-  const openSplit = ({ name }: { name: string }) => {
-    if (level === "大类")
-      go({
-        categories: categoryNodes.find((node) => node.key === name)?.leaves.map((l) => l.key) ?? [],
-      });
-    else if (level === "类别") go({ categories: [name] });
-    else go({ merchant: name });
-  };
 
   // The line: every month of the chosen years (or of all the data), under the filters.
   // Each month's usual level comes from the twelve before it, so the series starts at
@@ -340,7 +334,6 @@ export function SpendingTab({
     year === key.slice(0, 4) && month === key.slice(5)
       ? go({ month: "" })
       : go({ years: [key.slice(0, 4)], month: key.slice(5) });
-  const splitShown = byChange ? [...split].sort((a, b) => b.usd - b.was - (a.usd - a.was)) : split;
 
   const trips = spending.trips ?? [];
   const filtered = Boolean(view.categories.length || view.tags.length || view.merchant);
@@ -542,24 +535,89 @@ export function SpendingTab({
         </p>
       )}
 
-      <section aria-label="每月走势">
-        <h3 className="mb-2 text-sm font-medium">
-          每月走势
-          <span className="text-muted-foreground ml-2 text-xs font-normal tabular-nums">
-            虚线是每个月前 {USUAL_MONTHS} 个月的中位数，红点是超过它 {HIGH_RATIO}{" "}
-            倍的月份，底部深色是固定支出（{[...FIXED_CATEGORIES].join("、")}）
+      <section aria-label="消费图">
+        <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <h3 className="text-sm font-medium">
+            {chart === "构成"
+              ? `大类构成（${year ? `${year} 年每月` : "每年"}）`
+              : tripMode
+                ? "每趟旅行"
+                : "每月走势"}
+          </h3>
+          {chart === "走势" && !tripMode && (
+            <span className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden className="bg-chart-1 inline-block h-0.5 w-4" />
+                每月
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span
+                  aria-hidden
+                  className="border-muted-foreground inline-block w-4 border-t border-dashed"
+                />
+                平常（前 {USUAL_MONTHS} 个月中位数）
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden className="bg-destructive inline-block h-2 w-2 rounded-full" />
+                超过平常 {HIGH_RATIO} 倍
+              </span>
+              <span
+                className="inline-flex items-center gap-1"
+                title={[...FIXED_CATEGORIES].join("、")}
+              >
+                <span aria-hidden className="bg-chart-4 inline-block h-2 w-3 opacity-60" />
+                固定支出
+              </span>
+            </span>
+          )}
+          {chart === "走势" && tripMode && (
+            <span className="text-muted-foreground flex items-center gap-x-3 text-xs">
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden className="bg-destructive inline-block h-2 w-2 rounded-full" />
+                高于平均
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span aria-hidden className="bg-success inline-block h-2 w-2 rounded-full" />
+                低于平均
+              </span>
+            </span>
+          )}
+          <span className="inline-flex text-xs sm:ml-auto" role="group" aria-label="切换图">
+            {(["走势", "构成"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                aria-pressed={chart === tab}
+                onClick={() => setChart(tab)}
+                className={`focus-visible:ring-ring rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-2 ${
+                  chart === tab ? "bg-muted font-medium" : "text-muted-foreground"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
           </span>
-        </h3>
-        <SpendingTrend
-          points={trend}
-          chosen={inChosen}
-          running={thisMonth}
-          onPick={pickMonth}
-          money={moneyText}
-        />
+        </div>
+        {chart === "构成" ? (
+          <SpendingMix rows={mixRows} groups={groupOrder} money={moneyText} onGroup={pickGroup} />
+        ) : tripMode ? (
+          <TripChart
+            points={tripPoints}
+            money={moneyText}
+            onPick={(name) => go({ tags: [keyOf({ kind: "旅行", value: name })] })}
+          />
+        ) : (
+          <SpendingTrend
+            points={trend}
+            chosen={inChosen}
+            running={thisMonth}
+            onPick={pickMonth}
+            money={moneyText}
+          />
+        )}
       </section>
 
-      {year && month && (
+      {year && month && !tripMode && (
         <MonthExplained
           monthKey={prefix}
           rows={filteredAll}
@@ -569,90 +627,18 @@ export function SpendingTab({
         />
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {byTag.length > 0 && (
-          <section aria-label="按标签">
-            <h3 className="mb-2 text-sm font-medium">按标签</h3>
-            <SplitList items={byTag} compare={Boolean(before)} sum={sum} money={moneyText} />
-            {byTag.length > 1 && (
-              <p className="text-muted-foreground mt-1 text-xs">
-                一笔带两个所选标签时两行都算，合计按一次算。
-              </p>
-            )}
-          </section>
-        )}
-        {level && (
-          <section aria-label={`按${level}`}>
-            <h3 className="mb-2 text-sm font-medium">
-              按{level}
-              {before && (
-                <span className="text-muted-foreground ml-2 text-xs font-normal">
-                  和 {beforeName} 比
-                </span>
-              )}
-              {before && (
-                <span className="ml-3 inline-flex text-xs font-normal">
-                  {(
-                    [
-                      [false, "按金额"],
-                      [true, "按变化"],
-                    ] as const
-                  ).map(([on, label]) => (
-                    <button
-                      key={label}
-                      type="button"
-                      aria-pressed={byChange === on}
-                      onClick={() => setByChange(on)}
-                      className={`focus-visible:ring-ring rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-2 ${
-                        byChange === on ? "bg-muted font-medium" : "text-muted-foreground"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </span>
-              )}
-            </h3>
-            <SplitList
-              items={splitShown.slice(0, SPLIT_ROWS).map((item) => ({ ...item, key: item.name }))}
-              compare={Boolean(before)}
-              sum={sum}
-              money={moneyText}
-              onOpen={openSplit}
-            />
-            {split.length > SPLIT_ROWS && (
-              <p className="text-muted-foreground mt-1 text-xs">
-                只列前 {SPLIT_ROWS} 项，其余在下面的明细里搜。
-              </p>
-            )}
-          </section>
-        )}
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section aria-label="大类构成">
-          <h3 className="mb-2 text-sm font-medium">
-            大类构成（{year ? `${year} 年每月` : "每年"}）
-          </h3>
-          <SpendingMix rows={mixRows} groups={groupOrder} money={moneyText} onGroup={pickGroup} />
-        </section>
-        <Compare
-          rows={shown}
-          beforeRows={beforeRows}
-          compare={Boolean(before)}
-          trips={trips}
-          tagKinds={tagNodes.map((node) => node.key)}
-          preferred={chosenTags.find((tag) => tag.value)?.kind ?? "类别"}
-          money={moneyText}
-          onPick={(by, name) =>
-            by === "类别"
-              ? go({ categories: [name], merchant: "" })
-              : by === "商户"
-                ? go({ merchant: name })
-                : go({ tags: [keyOf({ kind: by, value: name })] })
-          }
-        />
-      </div>
+      <Breakdown
+        rows={shown}
+        beforeRows={beforeRows}
+        beforeName={beforeName}
+        groupOf={groupOf}
+        trips={trips}
+        tagKinds={tagNodes.map((node) => node.key)}
+        preferred={preferredLevel}
+        resetKey={JSON.stringify([view.categories, view.tags, view.merchant])}
+        money={moneyText}
+        onPick={pickPart}
+      />
 
       <Ledger
         rows={shown}

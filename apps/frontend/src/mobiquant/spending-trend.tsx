@@ -23,7 +23,11 @@ const USUAL_AT_LEAST = 6; // fewer months before than this and there is no usual
 export function withUsual(series: { key: string; usd: number; fixed: number }[]): TrendPoint[] {
   return series.map((point, index) => {
     const earlier = series.slice(Math.max(0, index - USUAL_MONTHS), index).map((p) => p.usd);
-    return { ...point, usual: earlier.length >= USUAL_AT_LEAST ? median(earlier) : null };
+    // Spending that comes in some months only (a trip, one merchant) has no usual month:
+    // a median of mostly empty months would call any month with spending "13 times".
+    const empty = earlier.filter((usd) => usd <= 0).length;
+    const enough = earlier.length >= USUAL_AT_LEAST && empty * 2 <= earlier.length;
+    return { ...point, usual: enough ? median(earlier) : null };
   });
 }
 
@@ -115,7 +119,7 @@ export function SpendingTrend({
 
   const hovered = at != null ? points[at] : null;
   const versus = (usd: number, usual: number | null) => {
-    if (!usual || usual <= 0) return "前 12 个月数据不够，没有平常水平";
+    if (!usual || usual <= 0) return "前 12 个月数据太少或时有时无，没有平常水平可比";
     const ratio = usd / usual;
     if (ratio >= 1.05) return `平常的 ${ratio.toFixed(1)} 倍`;
     if (ratio <= 0.95) return `比平常少 ${Math.round((1 - ratio) * 100)}%`;
