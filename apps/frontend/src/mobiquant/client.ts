@@ -125,6 +125,8 @@ export interface SpendingRecord {
   cashback_usd: string;
   mcc: string;
   status: string;
+  // Where the row came from (etherfi, amex, alipay, ctrip …); places a row with no currency.
+  source?: string;
   category: string;
   owner: "self" | "other";
   counted: boolean;

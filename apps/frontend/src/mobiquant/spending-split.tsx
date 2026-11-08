@@ -110,3 +110,13 @@ export function SplitList({
     </ul>
   );
 }
+
+// A row of choices drawn as one framed control: the chosen one filled, the rest quiet.
+export const SEGMENTS =
+  "border-input bg-background inline-flex flex-wrap rounded-md border p-0.5 text-xs";
+export const segment = (on: boolean) =>
+  `focus-visible:ring-ring rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-2 ${
+    on
+      ? "bg-primary text-primary-foreground font-medium"
+      : "text-muted-foreground hover:text-foreground"
+  }`;

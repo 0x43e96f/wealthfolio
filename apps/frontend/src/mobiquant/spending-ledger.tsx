@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SpendingRecord } from "./client";
+import type { Place } from "./spending-place";
+import { SEGMENTS, segment } from "./spending-split";
 
-// Every row the filters leave, read like a ledger. By month (newest first, each month
+// Every row the filters leave, read like a ledger, folded until opened. By month (newest first, each month
 // with its subtotal) or grouped by what the owner is looking at: each trip, each group,
 // category or merchant as a heading with its total, folded until opened. Each row says
 // when, where, what for, how much and paid with what.
@@ -22,6 +24,7 @@ const sumOf = (rows: SpendingRecord[]) => rows.reduce((total, row) => total + Nu
 export function Ledger({
   rows,
   groupOf,
+  placeOf,
   groupings,
   preferred,
   resetKey,
@@ -34,7 +37,8 @@ export function Ledger({
 }: {
   rows: SpendingRecord[];
   groupOf: (category: string) => string;
-  groupings: string[]; // 大类, 类别, 商户 and tag kinds; 月份 is always offered first
+  placeOf: (row: SpendingRecord) => Place;
+  groupings: string[]; // 大类, 类别, 商户, 国家, 城市 and tag kinds; 月份 is always offered first
   preferred: string; // the grouping the filters suggest (旅行 once trips are ticked)
   resetKey: string; // changes with the filters; the owner's own choice then lapses
   noteOf: (grouping: string, name: string) => string; // a trip's dates, say
@@ -45,6 +49,8 @@ export function Ledger({
   onTag: (row: SpendingRecord) => void;
 }) {
   const [query, setQuery] = useState("");
+  // Folded until the owner opens it: the breakdown above already leads to every row.
+  const [expanded, setExpanded] = useState(false);
   const [byAmount, setByAmount] = useState(false);
   const [limit, setLimit] = useState(PAGE);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -87,6 +93,8 @@ export function Ledger({
       if (grouping === "大类") return [groupOf(row.category)];
       if (grouping === "类别") return [row.category];
       if (grouping === "商户") return [row.description];
+      if (grouping === "国家") return [placeOf(row).country];
+      if (grouping === "城市") return [placeOf(row).city];
       const values = tagsOf(row)
         .filter((t) => t.kind === grouping && t.value)
         .map((t) => t.value);
@@ -99,7 +107,7 @@ export function Ledger({
         bucket.push(row); // a local list being built, not shared state
         found.set(name, bucket);
       }
-    const byTime = !["大类", "类别", "商户"].includes(grouping);
+    const byTime = !["大类", "类别", "商户", "国家", "城市"].includes(grouping);
     return [...found.entries()]
       .map(([name, members]) => ({
         name,
@@ -111,7 +119,7 @@ export function Ledger({
         // A tag's groups (trips) newest first; the others by what they hold.
         byTime ? b.latest.localeCompare(a.latest) : b.usd - a.usd,
       );
-  }, [list, grouping, groupOf]);
+  }, [list, grouping, groupOf, placeOf]);
 
   const months = useMemo(() => {
     const totals = new Map<string, { usd: number; count: number }>();
@@ -123,10 +131,7 @@ export function Ledger({
     return totals;
   }, [list]);
 
-  const toggle = (on: boolean) =>
-    `focus-visible:ring-ring rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-2 ${
-      on ? "bg-muted font-medium" : "text-muted-foreground"
-    }`;
+  const toggle = segment;
   const flip = (name: string) => {
     const next = new Set(open);
     if (next.has(name)) next.delete(name);
@@ -148,54 +153,70 @@ export function Ledger({
   return (
     <section aria-label="消费明细">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-medium">消费明细（{list.length} 笔）</h3>
-        <div className="flex flex-wrap text-xs" role="group" aria-label="明细分组">
-          {options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={grouping === option}
-              onClick={() => {
-                setChosen(option);
-                setOpen(new Set());
+        <h3 className="text-sm font-medium">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+            className="focus-visible:ring-ring inline-flex items-center gap-1 rounded focus-visible:outline-none focus-visible:ring-2"
+          >
+            <span aria-hidden className="text-muted-foreground w-3 text-xs">
+              {expanded ? "▾" : "▸"}
+            </span>
+            消费明细（{list.length} 笔）
+          </button>
+        </h3>
+        {expanded && (
+          <>
+            <div className={SEGMENTS} role="group" aria-label="明细分组">
+              {options.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={grouping === option}
+                  onClick={() => {
+                    setChosen(option);
+                    setOpen(new Set());
+                  }}
+                  className={toggle(grouping === option)}
+                >
+                  按{option}
+                </button>
+              ))}
+            </div>
+            <div className={SEGMENTS} role="group" aria-label="明细排序">
+              <button
+                type="button"
+                aria-pressed={!byAmount}
+                onClick={() => setByAmount(false)}
+                className={toggle(!byAmount)}
+              >
+                新的在前
+              </button>
+              <button
+                type="button"
+                aria-pressed={byAmount}
+                onClick={() => setByAmount(true)}
+                className={toggle(byAmount)}
+              >
+                大的在前
+              </button>
+            </div>
+            <input
+              aria-label="搜索明细"
+              placeholder="搜索商户、描述、分类、标签或卡"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setLimit(PAGE);
               }}
-              className={toggle(grouping === option)}
-            >
-              按{option}
-            </button>
-          ))}
-        </div>
-        <div className="flex text-xs" role="group" aria-label="明细排序">
-          <button
-            type="button"
-            aria-pressed={!byAmount}
-            onClick={() => setByAmount(false)}
-            className={toggle(!byAmount)}
-          >
-            新的在前
-          </button>
-          <button
-            type="button"
-            aria-pressed={byAmount}
-            onClick={() => setByAmount(true)}
-            className={toggle(byAmount)}
-          >
-            大的在前
-          </button>
-        </div>
-        <input
-          aria-label="搜索明细"
-          placeholder="搜索商户、描述、分类、标签或卡"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setLimit(PAGE);
-          }}
-          className="border-input bg-background h-9 w-full rounded-md border px-2 text-sm sm:ml-auto sm:w-64"
-        />
+              className="border-input bg-background h-9 w-full rounded-md border px-2 text-sm sm:ml-auto sm:w-64"
+            />
+          </>
+        )}
       </div>
 
-      {list.length === 0 ? (
+      {!expanded ? null : list.length === 0 ? (
         <p className="text-muted-foreground py-6 text-center text-sm">
           没有符合筛选的消费。换个年份，或把类别、标签清空再看。
         </p>

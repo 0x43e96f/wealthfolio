@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SEGMENTS, segment } from "./spending-split";
 
 // How the spending of each year (or each month of one year) splits into the groups:
 // one bar per period, a coloured piece per group. 金额 keeps the bars to scale against
@@ -64,7 +65,7 @@ export function SpendingMix({
             {group}
           </button>
         ))}
-        <span className="ml-auto inline-flex">
+        <span className={`ml-auto ${SEGMENTS}`} role="group" aria-label="金额或占比">
           {(
             [
               [false, "金额"],
@@ -76,9 +77,7 @@ export function SpendingMix({
               type="button"
               aria-pressed={share === on}
               onClick={() => setShare(on)}
-              className={`focus-visible:ring-ring rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-2 ${
-                share === on ? "bg-muted font-medium" : "text-muted-foreground"
-              }`}
+              className={segment(share === on)}
             >
               {label}
             </button>

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { SpendTrip, SpendingRecord } from "./client";
 import { tagsOf } from "./spending-ledger";
-import { SplitList, type SplitItem } from "./spending-split";
+import type { Place } from "./spending-place";
+import { SEGMENTS, segment, SplitList, type SplitItem } from "./spending-split";
 
 // The one list that splits what the page shows. Its level follows the filters (groups
 // at first, the categories of the chosen groups, the merchants of one category, the
@@ -23,6 +24,7 @@ export function Breakdown({
   groupOf,
   trips,
   tagKinds,
+  placeOf,
   preferred,
   resetKey,
   money,
@@ -34,6 +36,7 @@ export function Breakdown({
   groupOf: (category: string) => string;
   trips: SpendTrip[];
   tagKinds: string[];
+  placeOf: (row: SpendingRecord) => Place;
   preferred: string; // the level the filters suggest
   resetKey: string; // changes with the filters; the owner's own choice of level then lapses
   money: (usd: number) => string;
@@ -51,7 +54,7 @@ export function Breakdown({
   const kinds = tagKinds.filter((kind) =>
     rows.some((row) => tagsOf(row).some((t) => t.kind === kind && t.value)),
   );
-  const levels = ["大类", "类别", "商户", ...kinds];
+  const levels = ["大类", "类别", "商户", "国家", "城市", ...kinds];
   const by =
     chosen && levels.includes(chosen) ? chosen : levels.includes(preferred) ? preferred : "大类";
   const isTrip = by === "旅行";
@@ -62,9 +65,13 @@ export function Breakdown({
         ? [row.category]
         : by === "商户"
           ? [row.description]
-          : tagsOf(row)
-              .filter((t) => t.kind === by && t.value)
-              .map((t) => t.value);
+          : by === "国家"
+            ? [placeOf(row).country]
+            : by === "城市"
+              ? [placeOf(row).city]
+              : tagsOf(row)
+                  .filter((t) => t.kind === by && t.value)
+                  .map((t) => t.value);
 
   const found = new Map<string, { usd: number; count: number }>();
   for (const row of rows)
@@ -117,16 +124,13 @@ export function Breakdown({
           : b.usd - a.usd || b.was - a.was,
   );
   const shown: SplitItem[] = all ? sorted : sorted.slice(0, SHOW);
-  const toggle = (on: boolean) =>
-    `focus-visible:ring-ring rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-2 ${
-      on ? "bg-muted font-medium" : "text-muted-foreground"
-    }`;
+  const toggle = segment;
 
   return (
     <section aria-label="拆分" className="max-w-3xl">
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h3 className="text-sm font-medium">按{by}</h3>
-        <span className="inline-flex flex-wrap text-xs" role="group" aria-label="按什么拆分">
+        <span className={SEGMENTS} role="group" aria-label="按什么拆分">
           {levels.map((level) => (
             <button
               key={level}
@@ -139,7 +143,7 @@ export function Breakdown({
             </button>
           ))}
         </span>
-        <span className="inline-flex text-xs sm:ml-auto" role="group" aria-label="排序">
+        <span className={`${SEGMENTS} sm:ml-auto`} role="group" aria-label="排序">
           {orders.map(([key, label]) => (
             <button
               key={key}

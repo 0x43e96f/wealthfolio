@@ -943,6 +943,7 @@ describe("private Portfolio", () => {
       "prompt",
       vi.fn(() => "家居"),
     );
+    fireEvent.click(screen.getByRole("button", { name: /消费明细/ }));
     fireEvent.click(screen.getAllByRole("button", { name: "改分类" })[0]);
     await waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
     const put = calls.find((call) => call.method === "PUT")!;
@@ -1046,6 +1047,7 @@ describe("private Portfolio", () => {
     expect(totalShown("$30.00")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "清除类别和标签" }));
     expect(totalShown("$450.00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /消费明细/ }));
     // Pinning a row to a trip sends its id and the trip's id.
     vi.stubGlobal(
       "prompt",
@@ -1408,6 +1410,9 @@ describe("private Portfolio", () => {
     render(<Portfolio />);
     fireEvent.click(await screen.findByRole("button", { name: "消费" }));
     const ledger = () => within(screen.getByLabelText("消费明细"));
+    // Folded at first; the triangle opens it.
+    expect(ledger().queryByText("HOME DINER")).toBeNull();
+    fireEvent.click(ledger().getByRole("button", { name: /消费明细/ }));
     // By month at first: every row is listed.
     expect(ledger().getByRole("button", { name: "按月份" }).getAttribute("aria-pressed")).toBe(
       "true",
@@ -1432,6 +1437,73 @@ describe("private Portfolio", () => {
     // 只看这组 narrows the page to that trip.
     fireEvent.click(ledger().getAllByRole("button", { name: "只看这组" })[0]);
     expect(totalShown("$300.00")).toBeTruthy();
+  });
+
+  it("adds up spending by country and city, from trips and from home", async () => {
+    const spending = {
+      records: [
+        {
+          ...spendRow("a", "2024-04-22", "XIKEBAO", "100", "餐饮", [
+            { kind: "旅行", value: "上海（2024-04）" },
+          ]),
+          orig_currency: "CNY",
+          orig_amount: "720",
+        },
+        {
+          ...spendRow("b", "2023-05-14", "FOMO", "50", "餐饮", [
+            { kind: "旅行", value: "上海（2023-05）" },
+          ]),
+          orig_currency: "CNY",
+          orig_amount: "360",
+        },
+        {
+          ...spendRow("c", "2026-08-08", "BKK CAFE", "30", "餐饮", [
+            { kind: "旅行", value: "泰国+越南" },
+          ]),
+          orig_currency: "THB",
+          orig_amount: "1000",
+        },
+        {
+          ...spendRow("d", "2026-08-13", "PHO", "20", "餐饮", [
+            { kind: "旅行", value: "泰国+越南" },
+          ]),
+          orig_currency: "VND",
+          orig_amount: "500000",
+        },
+        {
+          ...spendRow("e", "2026-09-01", "WUXI NOODLE", "10", "餐饮"),
+          orig_currency: "CNY",
+          orig_amount: "72",
+          source: "alipay",
+        },
+      ],
+      categories: ["餐饮"],
+      groups: { order: ["吃喝"], of: { 餐饮: "吃喝" } },
+      tag_kinds: [{ kind: "旅行", source: "trip" }],
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    expect(await screen.findByText("$210.00", { selector: "p.text-3xl" })).toBeTruthy();
+    // By country: the trip across two countries splits by currency; home is 中国 too.
+    const split = () => within(screen.getByLabelText("拆分"));
+    fireEvent.click(split().getByRole("button", { name: "国家" }));
+    const line = (name: string) => split().getByRole("button", { name }).closest("li")!.textContent;
+    expect(line("中国")).toContain("$160.00");
+    expect(line("泰国")).toContain("$30.00");
+    expect(line("越南")).toContain("$20.00");
+    // Opening 中国 narrows the page to its cities: both Shanghai trips are one city.
+    fireEvent.click(split().getByRole("button", { name: "中国" }));
+    expect(totalShown("$160.00")).toBeTruthy();
+    expect(line("上海")).toContain("$150.00");
+    expect(line("无锡（家）")).toContain("$10.00");
+    fireEvent.click(split().getByRole("button", { name: "上海" }));
+    expect(totalShown("$150.00")).toBeTruthy();
+    expect(screen.getByLabelText("地点筛选").textContent).toContain("上海");
   });
 
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {

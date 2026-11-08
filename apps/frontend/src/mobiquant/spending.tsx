@@ -12,10 +12,11 @@ import {
 } from "./client";
 import { Ledger, tagsOf, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
+import { NOWHERE, placeKey, placeOf, type Place } from "./spending-place";
 import { SpendingMix, type MixRow } from "./spending-mix";
 import { MonthExplained } from "./spending-month";
 import { Breakdown } from "./spending-breakdown";
-import { ChangePill } from "./spending-split";
+import { ChangePill, SEGMENTS, segment } from "./spending-split";
 import { TripChart, type TripPoint } from "./spending-tripchart";
 import { HIGH_RATIO, SpendingTrend, USUAL_MONTHS, withUsual } from "./spending-trend";
 
@@ -31,6 +32,7 @@ interface View {
   categories: string[]; // fine categories; empty = all
   tags: string[]; // tag keys (see keyOf); empty = no tag filter; a row needs any one
   merchant: string;
+  places: string[]; // place keys (country + city, see placeKey); empty = everywhere
   everyday: boolean; // leave out transfers and single purchases above BIG_USD
 }
 const START: View = {
@@ -39,6 +41,7 @@ const START: View = {
   categories: [],
   tags: [],
   merchant: "",
+  places: [],
   everyday: false,
 };
 // A purchase above this is a one-off (a laptop, a flight): it hides how everyday
@@ -143,7 +146,20 @@ export function SpendingTab({
   const tagOk = (row: SpendingRecord) =>
     chosenTags.length === 0 ||
     tagsOf(row).some((t) => chosenTags.some((c) => c.kind === t.kind && c.value === t.value));
-  const merchantOk = (row: SpendingRecord) => !view.merchant || row.description === view.merchant;
+  // Where each row was spent (its trip's place, or home), worked out once per load.
+  const places = useMemo(() => {
+    const found = new Map<string, Place>();
+    for (const row of spending.records) found.set(row.id, placeOf(row));
+    return found;
+  }, [spending.records]);
+  const placeOfRow = (row: SpendingRecord) =>
+    places.get(row.id) ?? { country: NOWHERE, city: NOWHERE };
+  const chosenPlaces = new Set(view.places);
+  const placeOk = (row: SpendingRecord) =>
+    chosenPlaces.size === 0 || chosenPlaces.has(placeKey(placeOfRow(row)));
+  const onlyMerchant = (row: SpendingRecord) => !view.merchant || row.description === view.merchant;
+  // The merchant and place filters travel together everywhere the page narrows rows.
+  const merchantOk = (row: SpendingRecord) => onlyMerchant(row) && placeOk(row);
   const inPeriod = (when: string) => all.filter((row) => !when || row.day.startsWith(when));
 
   const period = inPeriod(prefix).filter(
@@ -228,7 +244,9 @@ export function SpendingTab({
 
   // The breakdown's level follows the filters: the trips once trips are ticked, the
   // merchants of one category, the categories of several, the groups at first.
+  const chosenCities = new Set(view.places.map((key) => key.split("\u0000")[1]));
   const preferredLevel =
+    (chosenCities.size > 1 ? "城市" : undefined) ??
     chosenTags.find((tag) => tag.value)?.kind ??
     (view.merchant
       ? "类别"
@@ -244,7 +262,51 @@ export function SpendingTab({
         ? go({ categories: [name], merchant: "" })
         : level === "商户"
           ? go({ merchant: name })
-          : go({ tags: [keyOf({ kind: level, value: name })] });
+          : level === "国家"
+            ? go({
+                places:
+                  placeNodes.find((node) => node.key === name)?.leaves.map((l) => l.key) ?? [],
+              })
+            : level === "城市"
+              ? go({
+                  places: placeNodes
+                    .flatMap((node) => node.leaves)
+                    .filter((leaf) => leaf.label === name)
+                    .map((leaf) => leaf.key),
+                })
+              : go({ tags: [keyOf({ kind: level, value: name })] });
+
+  // The place menu: countries over their cities, with what each holds under the other
+  // filters (the place filter itself left out). 不分地点 comes last.
+  const placeNodes = useMemo<MenuNode[]>(() => {
+    const cities = new Map<string, Map<string, number>>();
+    for (const row of all) {
+      const place = placeOfRow(row);
+      const country = cities.get(place.country) ?? new Map<string, number>();
+      country.set(place.city, country.get(place.city) ?? 0);
+      cities.set(place.country, country);
+    }
+    for (const row of period) {
+      if (!catOk(row) || !tagOk(row) || !onlyMerchant(row)) continue;
+      const place = placeOfRow(row);
+      addTo(cities.get(place.country)!, place.city, Number(row.usd));
+    }
+    return [...cities.entries()]
+      .map(([country, inside]) => {
+        const leaves = [...inside.entries()]
+          .map(([city, usd]) => ({ key: placeKey({ country, city }), label: city, usd }))
+          .sort((a, b) => b.usd - a.usd || a.label.localeCompare(b.label));
+        return { key: country, label: country, usd: leaves.reduce((s, l) => s + l.usd, 0), leaves };
+      })
+      .sort((a, b) =>
+        a.key === NOWHERE
+          ? 1
+          : b.key === NOWHERE
+            ? -1
+            : b.usd - a.usd || a.label.localeCompare(b.label),
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [all, places, prefix, view.years, view.categories, view.tags, view.merchant]);
 
   // Looking at trips only, the chart shows trips, not months (most months have none).
   const tripMode = chosenTags.length > 0 && chosenTags.every((tag) => tag.kind === "旅行");
@@ -336,7 +398,9 @@ export function SpendingTab({
       : go({ years: [key.slice(0, 4)], month: key.slice(5) });
 
   const trips = spending.trips ?? [];
-  const filtered = Boolean(view.categories.length || view.tags.length || view.merchant);
+  const filtered = Boolean(
+    view.categories.length || view.tags.length || view.merchant || view.places.length,
+  );
 
   const attempt = async (job: () => Promise<void>, failure: string) => {
     try {
@@ -470,6 +534,14 @@ export function SpendingTab({
           onChange={(tags) => go({ tags })}
           money={money}
         />
+        <CheckMenu
+          name="地点"
+          everything="全部地点"
+          nodes={placeNodes}
+          selected={view.places}
+          onChange={(chosen) => go({ places: chosen })}
+          money={money}
+        />
         <div
           className="border-input inline-flex h-9 overflow-hidden rounded-md border text-sm"
           role="group"
@@ -507,7 +579,7 @@ export function SpendingTab({
           <button
             type="button"
             className="text-muted-foreground text-sm underline"
-            onClick={() => go({ categories: [], tags: [], merchant: "" })}
+            onClick={() => go({ categories: [], tags: [], merchant: "", places: [] })}
           >
             清除类别和标签
           </button>
@@ -582,16 +654,14 @@ export function SpendingTab({
               </span>
             </span>
           )}
-          <span className="inline-flex text-xs sm:ml-auto" role="group" aria-label="切换图">
+          <span className={`${SEGMENTS} sm:ml-auto`} role="group" aria-label="切换图">
             {(["走势", "构成"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
                 aria-pressed={chart === tab}
                 onClick={() => setChart(tab)}
-                className={`focus-visible:ring-ring rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-2 ${
-                  chart === tab ? "bg-muted font-medium" : "text-muted-foreground"
-                }`}
+                className={segment(chart === tab)}
               >
                 {tab}
               </button>
@@ -634,8 +704,9 @@ export function SpendingTab({
         groupOf={groupOf}
         trips={trips}
         tagKinds={tagNodes.map((node) => node.key)}
+        placeOf={placeOfRow}
         preferred={preferredLevel}
-        resetKey={JSON.stringify([view.categories, view.tags, view.merchant])}
+        resetKey={JSON.stringify([view.categories, view.tags, view.merchant, view.places])}
         money={moneyText}
         onPick={pickPart}
       />
@@ -643,10 +714,13 @@ export function SpendingTab({
       <Ledger
         rows={shown}
         groupOf={groupOf}
+        placeOf={placeOfRow}
         groupings={[
           "大类",
           "类别",
           "商户",
+          "国家",
+          "城市",
           ...tagNodes
             .map((node) => node.key)
             .filter((kind) =>
@@ -654,7 +728,7 @@ export function SpendingTab({
             ),
         ]}
         preferred={chosenTags.find((tag) => tag.value)?.kind ?? "月份"}
-        resetKey={JSON.stringify([view.categories, view.tags, view.merchant])}
+        resetKey={JSON.stringify([view.categories, view.tags, view.merchant, view.places])}
         noteOf={(grouping, name) => {
           const trip = grouping === "旅行" ? trips.find((t) => t.name === name) : undefined;
           return trip ? `${trip.start_day} ~ ${trip.end_day}` : "";
