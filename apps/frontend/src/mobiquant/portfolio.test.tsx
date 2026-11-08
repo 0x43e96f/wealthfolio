@@ -1358,6 +1358,82 @@ describe("private Portfolio", () => {
     expect(totalShown("$660.00")).toBeTruthy();
   });
 
+  it("groups the ledger by trip once trips are ticked, folded until opened", async () => {
+    const spending = {
+      records: [
+        spendRow("a", "2026-08-02", "HOTEL BKK", "300", "旅行娱乐", [
+          { kind: "旅行", value: "泰国" },
+        ]),
+        spendRow("b", "2026-07-15", "TAVERN", "60", "餐饮", [
+          { kind: "旅行", value: "纽芬兰自驾" },
+        ]),
+        spendRow("c", "2026-07-14", "WESTJET", "600", "交通出行", [
+          { kind: "旅行", value: "纽芬兰自驾" },
+        ]),
+        spendRow("d", "2026-10-01", "HOME DINER", "40", "餐饮"),
+      ],
+      trips: [
+        {
+          id: "t1",
+          name: "纽芬兰自驾",
+          start_day: "2026-07-11",
+          end_day: "2026-07-20",
+          note: "",
+          total_usd: "660",
+          count: 2,
+          categories: {},
+        },
+        {
+          id: "t2",
+          name: "泰国",
+          start_day: "2026-08-01",
+          end_day: "2026-08-03",
+          note: "",
+          total_usd: "300",
+          count: 1,
+          categories: {},
+        },
+      ],
+      categories: ["餐饮", "交通出行", "旅行娱乐"],
+      groups: {
+        order: ["吃喝", "交通与玩乐"],
+        of: { 餐饮: "吃喝", 交通出行: "交通与玩乐", 旅行娱乐: "交通与玩乐" },
+      },
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    const ledger = () => within(screen.getByLabelText("消费明细"));
+    // By month at first: every row is listed.
+    expect(ledger().getByRole("button", { name: "按月份" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(ledger().getByText("HOME DINER")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("标签筛选"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "旅行" }));
+    // Ticking trips groups it by trip, newest first, each folded.
+    expect(ledger().getByRole("button", { name: "按旅行" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    const heads = ledger().getAllByRole("button", { expanded: false });
+    expect(heads.map((head) => head.textContent)).toEqual([
+      expect.stringContaining("泰国"),
+      expect.stringContaining("纽芬兰自驾"),
+    ]);
+    expect(heads[1].textContent).toContain("2026-07-11 ~ 2026-07-20");
+    expect(heads[1].textContent).toContain("$660.00");
+    expect(ledger().queryByText("WESTJET")).toBeNull();
+    fireEvent.click(heads[1]);
+    expect(ledger().getByText("WESTJET")).toBeTruthy();
+    // 只看这组 narrows the page to that trip.
+    fireEvent.click(ledger().getAllByRole("button", { name: "只看这组" })[0]);
+    expect(totalShown("$300.00")).toBeTruthy();
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {

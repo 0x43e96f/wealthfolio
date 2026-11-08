@@ -643,6 +643,23 @@ export function SpendingTab({
       <Ledger
         rows={shown}
         groupOf={groupOf}
+        groupings={[
+          "大类",
+          "类别",
+          "商户",
+          ...tagNodes
+            .map((node) => node.key)
+            .filter((kind) =>
+              shown.some((row) => tagsOf(row).some((t) => t.kind === kind && t.value)),
+            ),
+        ]}
+        preferred={chosenTags.find((tag) => tag.value)?.kind ?? "月份"}
+        resetKey={JSON.stringify([view.categories, view.tags, view.merchant])}
+        noteOf={(grouping, name) => {
+          const trip = grouping === "旅行" ? trips.find((t) => t.name === name) : undefined;
+          return trip ? `${trip.start_day} ~ ${trip.end_day}` : "";
+        }}
+        onOpenGroup={pickPart}
         money={(value) => money(value)}
         onPickTag={pickTag}
         onRecategorize={recategorize}
