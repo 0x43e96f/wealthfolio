@@ -12,7 +12,7 @@ import {
 } from "./client";
 import { Ledger, tagsOf, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
-import { NOWHERE, placeKey, placesFor } from "./spending-place";
+import { cardName, NOWHERE, placeKey, placesFor } from "./spending-place";
 import { groupColour, SpendingMix, type MixRow } from "./spending-mix";
 import { SpendingPie } from "./spending-pie";
 import { MonthExplained } from "./spending-month";
@@ -33,6 +33,7 @@ interface View {
   categories: string[]; // fine categories; empty = all
   tags: string[]; // tag keys (see keyOf); empty = no tag filter; a row needs any one
   merchant: string;
+  card: string; // one card's rows only ("" = every card)
   places: string[]; // place keys (country + city, see placeKey); empty = everywhere
   everyday: boolean; // leave out transfers and single purchases above BIG_USD
 }
@@ -42,6 +43,7 @@ const START: View = {
   categories: [],
   tags: [],
   merchant: "",
+  card: "",
   places: [],
   everyday: false,
 };
@@ -154,7 +156,10 @@ export function SpendingTab({
   const chosenPlaces = new Set(view.places);
   const placeOk = (row: SpendingRecord) =>
     chosenPlaces.size === 0 || chosenPlaces.has(placeKey(placeOfRow(row)));
-  const onlyMerchant = (row: SpendingRecord) => !view.merchant || row.description === view.merchant;
+  // Merchant and card narrow the same way (one picked from the breakdown).
+  const onlyMerchant = (row: SpendingRecord) =>
+    (!view.merchant || row.description === view.merchant) &&
+    (!view.card || cardName(row) === view.card);
   // The merchant and place filters travel together everywhere the page narrows rows.
   const merchantOk = (row: SpendingRecord) => onlyMerchant(row) && placeOk(row);
   const inPeriod = (when: string) => all.filter((row) => !when || row.day.startsWith(when));
@@ -259,19 +264,21 @@ export function SpendingTab({
         ? go({ categories: [name], merchant: "" })
         : level === "商户"
           ? go({ merchant: name })
-          : level === "国家"
-            ? go({
-                places:
-                  placeNodes.find((node) => node.key === name)?.leaves.map((l) => l.key) ?? [],
-              })
-            : level === "城市"
+          : level === "卡"
+            ? go({ card: name })
+            : level === "国家"
               ? go({
-                  places: placeNodes
-                    .flatMap((node) => node.leaves)
-                    .filter((leaf) => leaf.label === name)
-                    .map((leaf) => leaf.key),
+                  places:
+                    placeNodes.find((node) => node.key === name)?.leaves.map((l) => l.key) ?? [],
                 })
-              : go({ tags: [keyOf({ kind: level, value: name })] });
+              : level === "城市"
+                ? go({
+                    places: placeNodes
+                      .flatMap((node) => node.leaves)
+                      .filter((leaf) => leaf.label === name)
+                      .map((leaf) => leaf.key),
+                  })
+                : go({ tags: [keyOf({ kind: level, value: name })] });
 
   // The place menu: countries over their cities, with what each holds under the other
   // filters (the place filter itself left out). 不分地点 comes last.
@@ -396,7 +403,7 @@ export function SpendingTab({
 
   const trips = spending.trips ?? [];
   const filtered = Boolean(
-    view.categories.length || view.tags.length || view.merchant || view.places.length,
+    view.categories.length || view.tags.length || view.merchant || view.card || view.places.length,
   );
 
   const attempt = async (job: () => Promise<void>, failure: string) => {
@@ -572,11 +579,19 @@ export function SpendingTab({
             </button>
           </span>
         )}
+        {view.card && (
+          <span className="bg-muted inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm">
+            卡：{view.card}
+            <button type="button" aria-label="去掉卡筛选" onClick={() => go({ card: "" })}>
+              ✕
+            </button>
+          </span>
+        )}
         {filtered && (
           <button
             type="button"
             className="text-muted-foreground text-sm underline"
-            onClick={() => go({ categories: [], tags: [], merchant: "", places: [] })}
+            onClick={() => go({ categories: [], tags: [], merchant: "", card: "", places: [] })}
           >
             清除类别和标签
           </button>
@@ -715,7 +730,13 @@ export function SpendingTab({
         tagKinds={tagNodes.map((node) => node.key)}
         placeOf={placeOfRow}
         preferred={preferredLevel}
-        resetKey={JSON.stringify([view.categories, view.tags, view.merchant, view.places])}
+        resetKey={JSON.stringify([
+          view.categories,
+          view.tags,
+          view.merchant,
+          view.card,
+          view.places,
+        ])}
         money={moneyText}
         onPick={pickPart}
       />
@@ -728,6 +749,7 @@ export function SpendingTab({
           "大类",
           "类别",
           "商户",
+          "卡",
           "国家",
           "城市",
           ...tagNodes
@@ -737,7 +759,13 @@ export function SpendingTab({
             ),
         ]}
         preferred={chosenTags.find((tag) => tag.value)?.kind ?? "月份"}
-        resetKey={JSON.stringify([view.categories, view.tags, view.merchant, view.places])}
+        resetKey={JSON.stringify([
+          view.categories,
+          view.tags,
+          view.merchant,
+          view.card,
+          view.places,
+        ])}
         noteOf={(grouping, name) => {
           const trip = grouping === "旅行" ? trips.find((t) => t.name === name) : undefined;
           return trip ? `${trip.start_day} ~ ${trip.end_day}` : "";

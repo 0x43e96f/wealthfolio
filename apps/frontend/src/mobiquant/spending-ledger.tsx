@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SpendingRecord } from "./client";
-import type { Place } from "./spending-place";
+import { cardName, type Place } from "./spending-place";
 import { SEGMENTS, segment } from "./spending-split";
 
 // Every row the filters leave, read like a ledger, folded until opened. By month (newest first, each month
@@ -93,6 +93,7 @@ export function Ledger({
       if (grouping === "大类") return [groupOf(row.category)];
       if (grouping === "类别") return [row.category];
       if (grouping === "商户") return [row.description];
+      if (grouping === "卡") return [cardName(row)];
       if (grouping === "国家") return [placeOf(row).country];
       if (grouping === "城市") return [placeOf(row).city];
       const values = tagsOf(row)
@@ -107,7 +108,7 @@ export function Ledger({
         bucket.push(row); // a local list being built, not shared state
         found.set(name, bucket);
       }
-    const byTime = !["大类", "类别", "商户", "国家", "城市"].includes(grouping);
+    const byTime = !["大类", "类别", "商户", "卡", "国家", "城市"].includes(grouping);
     return [...found.entries()]
       .map(([name, members]) => ({
         name,
@@ -334,7 +335,11 @@ function Row({
   onRecategorize: (row: SpendingRecord) => void;
   onTag: (row: SpendingRecord) => void;
 }) {
-  const title = row.label ?? row.description;
+  // A card's own charge (an annual fee, a swipe's fee) says which card it was for.
+  const label = row.label ?? row.description;
+  const card = cardName(row);
+  const title =
+    row.category === "卡费用" && card && !label.includes(card) ? `${label} · ${card}` : label;
   const foreign = row.orig_currency && row.orig_currency !== "USD";
   return (
     <li className="px-2 py-2">
@@ -363,7 +368,7 @@ function Row({
             ? row.category
             : `${groupOf(row.category)} / ${row.category}`}
         </span>
-        {row.card && <span>付款：{row.card}</span>}
+        {card && <span>付款：{card}</span>}
         {tagsOf(row).map((tag) => (
           <button
             key={tagText(tag)}

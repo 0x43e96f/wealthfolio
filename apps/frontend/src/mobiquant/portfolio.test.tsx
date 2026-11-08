@@ -1567,6 +1567,49 @@ describe("private Portfolio", () => {
     expect(totalShown("$60.00")).toBeTruthy();
   });
 
+  it("names the card a fee belongs to and splits by card", async () => {
+    const spending = {
+      records: [
+        {
+          ...spendRow("a", "2026-07-02", "手续费 · 7 Eleven", "0.30", "卡费用"),
+          card: "plasma",
+          source: "plasma",
+          label: "手续费 · 7 Eleven",
+        },
+        {
+          ...spendRow("b", "2026-07-02", "7 Eleven", "12", "超市"),
+          card: "plasma",
+          source: "plasma",
+        },
+        {
+          ...spendRow("c", "2026-07-03", "ANNUAL FEE", "120", "卡费用"),
+          card: "Amex Cobalt",
+          source: "amex",
+          label: "ANNUAL FEE · Amex Cobalt",
+        },
+      ],
+      categories: ["卡费用", "超市"],
+      groups: { order: ["吃喝", "生活与账单"], of: { 超市: "吃喝", 卡费用: "生活与账单" } },
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    expect(await screen.findByText("$132.30", { selector: "p.text-3xl" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /消费明细/ }));
+    // A crypto card's fee says which card it was; a fee already naming its card is left as is.
+    expect(screen.getByText("手续费 · 7 Eleven · Plasma 卡")).toBeTruthy();
+    expect(screen.getByText("ANNUAL FEE · Amex Cobalt")).toBeTruthy();
+    const split = () => within(screen.getByLabelText("拆分"));
+    fireEvent.click(split().getByRole("button", { name: "卡" }));
+    fireEvent.click(split().getByRole("button", { name: "Plasma 卡" }));
+    expect(totalShown("$12.30")).toBeTruthy();
+    expect(screen.getByText("卡：Plasma 卡")).toBeTruthy();
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {

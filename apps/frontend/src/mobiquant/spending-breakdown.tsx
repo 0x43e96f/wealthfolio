@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { SpendTrip, SpendingRecord } from "./client";
 import { tagsOf } from "./spending-ledger";
-import type { Place } from "./spending-place";
+import { cardName, type Place } from "./spending-place";
 import { SEGMENTS, segment, SplitList, type SplitItem } from "./spending-split";
 
 // The one list that splits what the page shows. Its level follows the filters (groups
@@ -54,7 +54,7 @@ export function Breakdown({
   const kinds = tagKinds.filter((kind) =>
     rows.some((row) => tagsOf(row).some((t) => t.kind === kind && t.value)),
   );
-  const levels = ["大类", "类别", "商户", "国家", "城市", ...kinds];
+  const levels = ["大类", "类别", "商户", "卡", "国家", "城市", ...kinds];
   const by =
     chosen && levels.includes(chosen) ? chosen : levels.includes(preferred) ? preferred : "大类";
   const isTrip = by === "旅行";
@@ -65,13 +65,15 @@ export function Breakdown({
         ? [row.category]
         : by === "商户"
           ? [row.description]
-          : by === "国家"
-            ? [placeOf(row).country]
-            : by === "城市"
-              ? [placeOf(row).city]
-              : tagsOf(row)
-                  .filter((t) => t.kind === by && t.value)
-                  .map((t) => t.value);
+          : by === "卡"
+            ? [cardName(row)]
+            : by === "国家"
+              ? [placeOf(row).country]
+              : by === "城市"
+                ? [placeOf(row).city]
+                : tagsOf(row)
+                    .filter((t) => t.kind === by && t.value)
+                    .map((t) => t.value);
 
   const found = new Map<string, { usd: number; count: number }>();
   for (const row of rows)

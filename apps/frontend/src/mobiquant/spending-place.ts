@@ -147,3 +147,13 @@ export function placesFor(records: SpendingRecord[]): Map<string, Place> {
   }
   return found;
 }
+
+// A card's name as the owner knows it: the crypto cards' exports name them by a code
+// (plasma, 5522, 1861), so the page says which card that is.
+export function cardName(row: SpendingRecord): string {
+  const card = row.card ?? "";
+  if (row.source === "plasma") return "Plasma 卡";
+  if (row.source === "solayer") return card ? `Solayer 卡 ${card}` : "Solayer 卡";
+  if (row.source === "etherfi") return card ? `ether.fi 卡 ${card}` : "ether.fi 卡";
+  return card || row.source || "";
+}
