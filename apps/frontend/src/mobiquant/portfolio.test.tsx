@@ -1178,6 +1178,80 @@ describe("private Portfolio", () => {
     }
   });
 
+  it("shows a month at once on the trend, opens it and explains it against the usual", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-07T12:00:00"));
+    try {
+      const months = ["2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05"];
+      const spending = {
+        records: [
+          spendRow("big", "2026-06-10", "WESTJET", "900", "交通出行", [
+            { kind: "旅行", value: "纽芬兰自驾" },
+          ]),
+          spendRow("f6", "2026-06-02", "UBER EATS", "100", "餐饮"),
+          ...months
+            .reverse()
+            .map((key, index) => spendRow(`f${index}`, `${key}-02`, "UBER EATS", "100", "餐饮")),
+        ],
+        categories: ["餐饮", "交通出行"],
+        groups: { order: ["吃喝", "交通与玩乐"], of: { 餐饮: "吃喝", 交通出行: "交通与玩乐" } },
+        cards: [],
+        topup_check: [],
+        cashback_earned_usd: "0",
+        cashback_claimed_usd: "0",
+      };
+      stubSpending(spending, []);
+      render(<Portfolio />);
+      fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+      const chart = await screen.findByRole("img", { name: /每月消费走势/ });
+      // The keyboard walks the months; the figure shows straight away.
+      fireEvent.keyDown(chart, { key: "ArrowRight" });
+      expect(screen.getByRole("status").textContent).toContain("2026-06");
+      expect(screen.getByRole("status").textContent).toContain("$1,000.00");
+      fireEvent.keyDown(chart, { key: "Enter" });
+      expect(screen.getByText("2026 年 6 月消费")).toBeTruthy();
+      // The month against the twelve before it (half of them empty); the flight is what grew.
+      const why = within(screen.getByLabelText("这个月和平常比"));
+      expect(why.getByText("这个月 $1,000.00", { exact: false })).toBeTruthy();
+      expect(why.getByText("交通出行")).toBeTruthy();
+      expect(why.getByText("多 $900.00")).toBeTruthy();
+      expect(why.getByText("这个月的旅行", { exact: false }).textContent).toContain("纽芬兰自驾");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sorts the split by what grew most", async () => {
+    const spending = {
+      records: [
+        spendRow("a", "2026-10-02", "UBER EATS", "300", "餐饮"),
+        spendRow("b", "2026-10-03", "AMZN", "500", "网购"),
+        spendRow("c", "2026-09-02", "UBER EATS", "100", "餐饮"),
+        spendRow("d", "2026-09-03", "AMZN", "450", "网购"),
+      ],
+      categories: ["网购", "餐饮"],
+      groups,
+      cards: [],
+      topup_check: [],
+      cashback_earned_usd: "0",
+      cashback_claimed_usd: "0",
+    };
+    stubSpending(spending, []);
+    render(<Portfolio />);
+    fireEvent.click(await screen.findByRole("button", { name: "消费" }));
+    fireEvent.click(await screen.findByLabelText("年份筛选"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "2026 年" }));
+    fireEvent.change(screen.getByLabelText("消费月份"), { target: { value: "10" } });
+    const names = () =>
+      within(screen.getByLabelText("按大类"))
+        .getAllByRole("button")
+        .map((button) => button.textContent)
+        .filter((text) => text === "吃喝" || text === "购物");
+    expect(names()).toEqual(["购物", "吃喝"]);
+    fireEvent.click(screen.getByRole("button", { name: "按变化" }));
+    expect(names()).toEqual(["吃喝", "购物"]);
+  });
+
   it("zooms the curve with the wheel, moves the window and returns to the whole", async () => {
     const data = context();
     const past = {

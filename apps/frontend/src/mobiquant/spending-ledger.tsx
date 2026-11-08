@@ -123,7 +123,7 @@ export function Ledger({
                 )}
                 <div className="px-2 py-2">
                   <div className="flex items-start gap-3">
-                    <span className="text-muted-foreground w-20 shrink-0 tabular-nums">
+                    <span className="text-muted-foreground w-24 shrink-0 whitespace-nowrap tabular-nums">
                       {row.day}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -143,7 +143,7 @@ export function Ledger({
                       )}
                     </div>
                   </div>
-                  <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-0 text-xs sm:pl-[5.75rem]">
+                  <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-0 text-xs sm:pl-[6.75rem]">
                     <span>
                       {groupOf(row.category) === row.category
                         ? row.category

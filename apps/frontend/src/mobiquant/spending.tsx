@@ -12,6 +12,8 @@ import {
 } from "./client";
 import { Ledger, tagsOf, tagText, type Tag } from "./spending-ledger";
 import { CheckMenu, type MenuNode } from "./spending-menu";
+import { MonthExplained } from "./spending-month";
+import { HIGH_RATIO, SpendingTrend, USUAL_MONTHS, withUsual } from "./spending-trend";
 
 // The 消费 tab. Four drop-downs choose what is counted: a year, a month, any number of
 // categories and any number of tags (a trip, a means of transport, 订阅 …), and 日常 /
@@ -65,6 +67,7 @@ export function SpendingTab({
   const [view, setView] = useState<View>(START);
   const [note, setNote] = useState("");
   const [managing, setManaging] = useState(false);
+  const [byChange, setByChange] = useState(false); // sort the split by what grew most
   const [tripForm, setTripForm] = useState(EMPTY_TRIP);
 
   // Every filter change is a step of the browser's history: back undoes it.
@@ -266,24 +269,38 @@ export function SpendingTab({
     else go({ merchant: name });
   };
 
-  // The bars: the months of the chosen year, or every year.
-  const bars = (() => {
-    const rows = (year ? inPeriod(year) : all).filter(
-      (row) => catOk(row) && tagOk(row) && merchantOk(row),
-    );
-    const slot = year ? 7 : 4;
+  // The line: every month of the chosen years (or of all the data), under the filters.
+  // Each month's usual level comes from the twelve before it, so the series starts at
+  // the first month of data whatever range is shown.
+  const filteredAll = all.filter((row) => catOk(row) && tagOk(row) && merchantOk(row));
+  const thisMonth = todayDay.slice(0, 7);
+  const trend = (() => {
     const found = new Map<string, number>();
-    for (const row of rows) addTo(found, row.day.slice(0, slot), Number(row.usd));
-    const keys = year
-      ? Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`)
-      : [...years].reverse();
-    const top = Math.max(1, ...keys.map((key) => found.get(key) ?? 0));
-    return keys.map((key) => ({
-      key,
-      usd: found.get(key) ?? 0,
-      height: ((found.get(key) ?? 0) / top) * 100,
-    }));
+    for (const row of filteredAll) addTo(found, row.day.slice(0, 7), Number(row.usd));
+    const firstData = all.length ? all[all.length - 1].day.slice(0, 7) : thisMonth;
+    const lastData = all.length ? all[0].day.slice(0, 7) : thisMonth;
+    const picked = [...view.years].sort();
+    const from = picked.length ? `${picked[0]}-01` : firstData;
+    const to = picked.length ? [`${picked[picked.length - 1]}-12`, lastData].sort()[0] : lastData;
+    const keys: string[] = [];
+    const start = [firstData, from].sort()[0];
+    for (let [y, m] = start.split("-").map(Number); `${y}-${String(m).padStart(2, "0")}` <= to; ) {
+      keys.push(`${y}-${String(m).padStart(2, "0")}`);
+      m += 1;
+      if (m > 12) [y, m] = [y + 1, 1];
+    }
+    return withUsual(keys.map((key) => ({ key, usd: found.get(key) ?? 0 }))).filter(
+      (point) => point.key >= from,
+    );
   })();
+  const inChosen = (key: string) =>
+    Boolean(prefix || chosenYears.size) &&
+    (prefix ? key.startsWith(prefix) : chosenYears.has(key.slice(0, 4)));
+  const pickMonth = (key: string) =>
+    year === key.slice(0, 4) && month === key.slice(5)
+      ? go({ month: "" })
+      : go({ years: [key.slice(0, 4)], month: key.slice(5) });
+  const splitShown = byChange ? [...split].sort((a, b) => b.usd - b.was - (a.usd - a.was)) : split;
 
   const trips = spending.trips ?? [];
   const filtered = Boolean(view.categories.length || view.tags.length || view.merchant);
@@ -486,31 +503,31 @@ export function SpendingTab({
         </p>
       )}
 
-      <div className="flex h-16 items-end gap-1" aria-label={year ? "按月金额" : "按年金额"}>
-        {bars.map((bar) => (
-          <button
-            key={bar.key}
-            type="button"
-            title={`${bar.key}：${moneyText(bar.usd)}`}
-            aria-label={`${bar.key} ${moneyText(bar.usd)}`}
-            onClick={() =>
-              year
-                ? go({ month: bar.key.slice(5) === month ? "" : bar.key.slice(5) })
-                : go({ years: [bar.key], month: "" })
-            }
-            className={`focus-visible:ring-ring min-w-[6px] flex-1 rounded-t focus-visible:outline-none focus-visible:ring-2 ${
-              bar.key === prefix || (!year && chosenYears.has(bar.key))
-                ? "bg-primary"
-                : "bg-primary/30"
-            }`}
-            style={{ height: `${Math.max(bar.height, 2)}%` }}
-          />
-        ))}
-      </div>
-      <div className="text-muted-foreground -mt-5 flex justify-between text-xs tabular-nums">
-        <span>{bars[0]?.key}</span>
-        <span>{bars[bars.length - 1]?.key}</span>
-      </div>
+      <section aria-label="每月走势">
+        <h3 className="mb-2 text-sm font-medium">
+          每月走势
+          <span className="text-muted-foreground ml-2 text-xs font-normal tabular-nums">
+            虚线是每个月前 {USUAL_MONTHS} 个月的中位数，红点是超过它 {HIGH_RATIO} 倍的月份
+          </span>
+        </h3>
+        <SpendingTrend
+          points={trend}
+          chosen={inChosen}
+          running={thisMonth}
+          onPick={pickMonth}
+          money={moneyText}
+        />
+      </section>
+
+      {year && month && (
+        <MonthExplained
+          monthKey={prefix}
+          rows={filteredAll}
+          partOf={(row) => (view.categories.length === 1 ? row.description : row.category)}
+          money={moneyText}
+          running={prefix === thisMonth}
+        />
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {byTag.length > 0 && (
@@ -539,9 +556,31 @@ export function SpendingTab({
                   和 {beforeName} 比
                 </span>
               )}
+              {before && (
+                <span className="ml-3 inline-flex text-xs font-normal">
+                  {(
+                    [
+                      [false, "按金额"],
+                      [true, "按变化"],
+                    ] as const
+                  ).map(([on, label]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      aria-pressed={byChange === on}
+                      onClick={() => setByChange(on)}
+                      className={`focus-visible:ring-ring rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-2 ${
+                        byChange === on ? "bg-muted font-medium" : "text-muted-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              )}
             </h3>
             <SplitList
-              items={split.slice(0, SPLIT_ROWS).map((item) => ({ ...item, key: item.name }))}
+              items={splitShown.slice(0, SPLIT_ROWS).map((item) => ({ ...item, key: item.name }))}
               compare={Boolean(before)}
               sum={sum}
               money={moneyText}
@@ -753,17 +792,21 @@ function SplitList({
             </span>
             <span className="w-24 shrink-0 text-right tabular-nums">{money(item.usd)}</span>
           </div>
-          {compare && (
-            <p className="text-muted-foreground text-right text-xs tabular-nums">
-              上期 {money(item.was)}
-              {"\u3000"}
-              <Change usd={item.usd} was={item.was} money={money} />
-            </p>
-          )}
-          <div
-            className="bg-primary/30 mt-0.5 h-1 rounded"
-            style={{ width: `${sum > 0 ? Math.max(1, (item.usd / sum) * 100) : 0}%` }}
-          />
+          <div className="mt-0.5 flex items-center gap-3">
+            <div className="h-1 min-w-0 flex-1">
+              <div
+                className="bg-primary/30 h-1 rounded"
+                style={{ width: `${sum > 0 ? Math.max(1, (item.usd / sum) * 100) : 0}%` }}
+              />
+            </div>
+            {compare && (
+              <p className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                上期 {money(item.was)}
+                {"\u3000"}
+                <Change usd={item.usd} was={item.was} money={money} />
+              </p>
+            )}
+          </div>
         </li>
       ))}
     </ul>
